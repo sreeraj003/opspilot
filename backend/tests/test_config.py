@@ -37,3 +37,31 @@ def test_database_url_secret_is_not_exposed_in_repr() -> None:
 def test_invalid_values_are_rejected(field: str, value: str) -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **{field: value})
+
+
+def test_jwt_secret_required_outside_development() -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, environment="production")
+    settings = Settings(_env_file=None, environment="production", jwt_secret_key="s" * 40)
+    assert settings.jwt_secret_ephemeral is False
+    assert "s" * 40 not in repr(settings)
+
+
+def test_development_generates_ephemeral_jwt_secret() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.jwt_secret_ephemeral is True
+    assert settings.jwt_secret_key is not None and len(settings.jwt_secret_key.get_secret_value()) >= 32
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("jwt_secret_key", "too-short"),
+        ("cors_origins", "*"),
+        ("jwt_algorithm", "none"),
+        ("jwt_algorithm", "RS256"),
+    ],
+)
+def test_insecure_auth_settings_are_rejected(field: str, value: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{field: value})

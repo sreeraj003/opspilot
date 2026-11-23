@@ -33,9 +33,7 @@ def _error_response(
     details: Any | None = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
-    body = ErrorResponse(
-        error=ErrorBody(code=code, message=message, details=details, request_id=get_request_id())
-    )
+    body = ErrorResponse(error=ErrorBody(code=code, message=message, details=details, request_id=get_request_id()))
     return JSONResponse(status_code=status_code, content=jsonable_encoder(body), headers=headers)
 
 
@@ -43,7 +41,7 @@ async def app_error_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AppError)
     if exc.status_code >= 500:
         logger.error("Application error", extra={"code": exc.code, "error_message": exc.message})
-    return _error_response(exc.status_code, exc.code, exc.message, exc.details)
+    return _error_response(exc.status_code, exc.code, exc.message, exc.details, headers=exc.headers)
 
 
 async def http_exception_handler(_: Request, exc: Exception) -> JSONResponse:
@@ -67,9 +65,7 @@ async def validation_exception_handler(_: Request, exc: Exception) -> JSONRespon
 async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     # Full traceback goes to logs only; clients get a generic message.
     logger.exception("Unhandled exception", exc_info=exc)
-    return _error_response(
-        status.HTTP_500_INTERNAL_SERVER_ERROR, "internal_error", "An unexpected error occurred."
-    )
+    return _error_response(status.HTTP_500_INTERNAL_SERVER_ERROR, "internal_error", "An unexpected error occurred.")
 
 
 def register_exception_handlers(app: FastAPI) -> None:
