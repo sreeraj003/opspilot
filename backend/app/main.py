@@ -3,6 +3,8 @@
 Run locally with:  uvicorn app.main:app --reload
 """
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,6 +14,9 @@ from app.core.lifespan import build_lifespan
 from app.core.logging import configure_logging
 from app.middleware.error_handlers import register_exception_handlers
 from app.middleware.request_context import REQUEST_ID_HEADER, RequestContextMiddleware
+from app.security.components import SecurityComponents
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -28,6 +33,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=f"{settings.api_v1_prefix}/redoc",
     )
     app.state.settings = settings
+    app.state.security = SecurityComponents.from_settings(settings)
+    if settings.jwt_secret_ephemeral:
+        logger.warning("JWT_SECRET_KEY not set; using an ephemeral key (tokens are invalidated on restart)")
     app.dependency_overrides[get_settings] = lambda: settings
 
     # Middleware added last runs first: request context wraps CORS so every
