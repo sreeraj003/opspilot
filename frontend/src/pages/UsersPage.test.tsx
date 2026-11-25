@@ -163,5 +163,6 @@ describe("UsersPage", () => {
 
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(await screen.findByRole("button", { name: "Activate Grace Hopper" })).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "Notifications" })).getByText("User deactivated")).toBeInTheDocument();
   });
 });
