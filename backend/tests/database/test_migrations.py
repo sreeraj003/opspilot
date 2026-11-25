@@ -23,6 +23,15 @@ from tests.conftest import BACKEND_DIR, alembic_config
 
 MIGRATIONS_DIR = BACKEND_DIR / "migrations" / "versions"
 AUTH_TABLES = {"users", "user_sessions", "retired_refresh_tokens", "password_reset_tokens", "auth_events"}
+RBAC_TABLES = {
+    "roles",
+    "permissions",
+    "role_permissions",
+    "user_roles",
+    "user_permissions",
+    "rbac_audit_events",
+    "authorization_state",
+}
 
 
 def test_alembic_ini_contains_no_database_url() -> None:
@@ -32,11 +41,12 @@ def test_alembic_ini_contains_no_database_url() -> None:
 def test_single_linear_history_starting_with_application_settings() -> None:
     script = ScriptDirectory.from_config(alembic_config("postgresql://unused@localhost/unused_test"))
 
-    assert script.get_heads() == ["0002"]
+    assert script.get_heads() == ["0003"]
     revisions = list(script.walk_revisions())
-    assert [r.revision for r in revisions] == ["0002", "0001"]
-    assert revisions[0].down_revision == "0001"
-    assert revisions[1].down_revision is None
+    assert [r.revision for r in revisions] == ["0003", "0002", "0001"]
+    assert revisions[0].down_revision == "0002"
+    assert revisions[1].down_revision == "0001"
+    assert revisions[2].down_revision is None
 
 
 def test_migration_files_follow_the_naming_scheme() -> None:
@@ -45,6 +55,7 @@ def test_migration_files_follow_the_naming_scheme() -> None:
     assert [f.name for f in files] == [
         "2026_11_25_0001_create_application_settings.py",
         "2026_11_25_0002_create_authentication_tables.py",
+        "2026_11_25_0003_create_rbac_tables.py",
     ]
 
 
@@ -84,10 +95,14 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         assert _tables(engine) == set()
 
         command.upgrade(config, "head")
-        assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES}
-        assert _current_revision(engine) == "0002"
+        assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES}
+        assert _current_revision(engine) == "0003"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
+        _assert_rbac_structure_and_seed(engine)
+
+        command.downgrade(config, "0002")
+        assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES}
 
         command.downgrade(config, "0001")
         assert _tables(engine) == {"alembic_version", "application_settings"}
@@ -97,9 +112,10 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         assert _current_revision(engine) is None
 
         command.upgrade(config, "head")
-        assert _current_revision(engine) == "0002"
+        assert _current_revision(engine) == "0003"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
+        _assert_rbac_structure_and_seed(engine)
     finally:
         engine.dispose()
 
@@ -174,3 +190,32 @@ def _assert_auth_structure(engine: Engine) -> None:
     }
     reset_columns = {column["name"] for column in inspector.get_columns("password_reset_tokens")}
     assert "token_hash" in reset_columns and "token" not in reset_columns
+
+
+def _assert_rbac_structure_and_seed(engine: Engine) -> None:
+    from app.core.authorization import SYSTEM_PERMISSIONS
+
+    inspector = inspect(engine)
+    for table, index in (
+        ("role_permissions", "ix_role_permissions_active_pair"),
+        ("user_roles", "ix_user_roles_active_pair"),
+        ("user_permissions", "ix_user_permissions_active_pair"),
+        ("roles", "ix_roles_key_live"),
+        ("permissions", "ix_permissions_key_live"),
+    ):
+        indexes = {i["name"]: i for i in inspector.get_indexes(table)}
+        assert indexes[index]["unique"], (table, index)
+    with engine.connect() as connection:
+        keys = set(connection.execute(text("SELECT key FROM permissions WHERE is_system AND resource_type = 'system'")).scalars())
+        assert keys == {d.key for d in SYSTEM_PERMISSIONS}
+        admin_permissions = connection.execute(
+            text(
+                "SELECT count(*) FROM role_permissions rp JOIN roles r ON r.id = rp.role_id "
+                "WHERE r.key = 'administrator' AND r.is_system"
+            )
+        ).scalar_one()
+        assert admin_permissions == len(SYSTEM_PERMISSIONS)
+        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 1
+        # Only built-in rows: no business roles or permissions are hard-coded.
+        assert connection.execute(text("SELECT count(*) FROM roles WHERE NOT is_system")).scalar_one() == 0
+        assert connection.execute(text("SELECT count(*) FROM permissions WHERE NOT is_system")).scalar_one() == 0

@@ -158,10 +158,10 @@ class AuthService:
             # Session revoked or expired, or the user was deactivated or deleted.
             raise AuthenticationError()
         user_session, user = found
-        return Principal(user=user, session_id=user_session.id, permissions=self._policy.permissions_for(user))
+        return Principal(user=user, session_id=user_session.id, permissions=await self._policy.permissions_for(user))
 
-    def permissions_for(self, user: User) -> frozenset[Permission]:
-        return self._policy.permissions_for(user)
+    async def permissions_for(self, user: User) -> frozenset[Permission]:
+        return await self._policy.permissions_for(user)
 
     # --- login --------------------------------------------------------------------------
 

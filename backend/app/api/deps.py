@@ -11,6 +11,9 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.authorization.cache import AuthorizationCache
+from app.authorization.engine import AuthorizationEngine, EngineAuthorizationPolicy
+from app.authorization.policy import PolicyLimits
 from app.core.authorization import AuthorizationPolicy, BootstrapAuthorizationPolicy, Permission
 from app.core.config import Settings, get_settings
 from app.core.exceptions import AuthenticationError, PermissionDeniedError, ServiceUnavailableError
@@ -21,6 +24,7 @@ from app.services.application_settings_service import ApplicationSettingsService
 from app.services.auth_service import AuthService, ClientInfo, PasswordResetNotifier, Principal
 from app.services.health_service import HealthService
 from app.services.password_service import PasswordService
+from app.services.rbac_service import RbacService
 from app.services.user_service import UserService
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -81,9 +85,22 @@ def get_password_reset_notifier(request: Request) -> PasswordResetNotifier:
     return request.app.state.password_reset_notifier
 
 
-def get_authorization_policy() -> AuthorizationPolicy:
-    """The active authorization policy. Module 04 overrides this with the dynamic permission engine."""
-    return _BOOTSTRAP_POLICY
+def get_authorization_cache(request: Request) -> AuthorizationCache | None:
+    return getattr(request.app.state, "authorization_cache", None)
+
+
+AuthorizationCacheDep = Annotated[AuthorizationCache | None, Depends(get_authorization_cache)]
+
+
+def get_authorization_policy(database: DatabaseDep, cache: AuthorizationCacheDep) -> AuthorizationPolicy:
+    """The active authorization policy: the Module 04 permission engine.
+
+    Without a configured database only the installation administrator can be
+    recognised, so the Module 03 bootstrap policy remains the fallback.
+    """
+    if database is None:
+        return _BOOTSTRAP_POLICY
+    return EngineAuthorizationPolicy(database, cache)
 
 
 _BOOTSTRAP_POLICY = BootstrapAuthorizationPolicy()
@@ -148,15 +165,15 @@ CurrentPrincipalDep = Annotated[Principal, Depends(get_current_principal)]
 def require_permission(permission: Permission) -> Callable[..., Awaitable[Principal]]:
     """Dependency factory: the caller must be authenticated and hold ``permission``.
 
-    The one place authorization is decided for routes. Module 04 changes the
-    decision by replacing ``get_authorization_policy``, not the routes.
+    The one place system permissions are enforced for routes. The decision
+    comes from ``get_authorization_policy`` (the Module 04 engine).
     """
 
     async def dependency(
         principal: CurrentPrincipalDep,
         policy: Annotated[AuthorizationPolicy, Depends(get_authorization_policy)],
     ) -> Principal:
-        if not policy.is_allowed(principal.user, permission):
+        if not await policy.is_allowed(principal.user, permission):
             raise PermissionDeniedError()
         return principal
 
@@ -173,3 +190,21 @@ def get_user_service(
 
 
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
+
+
+def get_authorization_engine(session: DbSessionDep, cache: AuthorizationCacheDep) -> AuthorizationEngine:
+    return AuthorizationEngine(session, cache)
+
+
+AuthorizationEngineDep = Annotated[AuthorizationEngine, Depends(get_authorization_engine)]
+
+
+def get_rbac_service(session: DbSessionDep, cache: AuthorizationCacheDep, settings: SettingsDep) -> RbacService:
+    limits = PolicyLimits(
+        max_depth=settings.authorization_policy_max_depth,
+        max_conditions=settings.authorization_policy_max_conditions,
+    )
+    return RbacService(session, cache=cache, limits=limits)
+
+
+RbacServiceDep = Annotated[RbacService, Depends(get_rbac_service)]

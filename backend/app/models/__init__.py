@@ -7,7 +7,30 @@ seen by ``alembic revision --autogenerate``.
 from app.models.application_setting import ApplicationSetting
 from app.models.auth_event import AuthEvent
 from app.models.password_reset_token import PasswordResetToken
+from app.models.rbac import (
+    AuthorizationState,
+    PermissionDefinition,
+    RbacAuditEvent,
+    Role,
+    RolePermission,
+    UserPermission,
+    UserRole,
+)
 from app.models.user import User
 from app.models.user_session import RetiredRefreshToken, UserSession
 
-__all__ = ["ApplicationSetting", "AuthEvent", "PasswordResetToken", "RetiredRefreshToken", "User", "UserSession"]
+__all__ = [
+    "ApplicationSetting",
+    "AuthEvent",
+    "AuthorizationState",
+    "PasswordResetToken",
+    "PermissionDefinition",
+    "RbacAuditEvent",
+    "RetiredRefreshToken",
+    "Role",
+    "RolePermission",
+    "User",
+    "UserPermission",
+    "UserRole",
+    "UserSession",
+]
