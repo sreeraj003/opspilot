@@ -1,10 +1,11 @@
 import { ArrowLeft } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { TextField } from "@/components/ui/Field";
+import { PageHeader } from "@/components/ui/Layout";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/features/permissions/permissionsContext";
 import { PolicyBuilder } from "@/features/rbac/PolicyBuilder";
@@ -99,12 +100,12 @@ function IssueList({ title, issues }: { title: string; issues: DraftIssue[] }) {
 function ReadOnlyPermission({ permission }: { permission: PermissionDetail }) {
   return (
     <Card title="Policy" description="This permission is read-only.">
-      <ul className="mb-4 list-inside list-disc space-y-1 text-sm text-stone-700" aria-label="Policy summary">
+      <ul className="mb-4 list-inside list-disc space-y-1 text-sm text-fg-secondary" aria-label="Policy summary">
         {summarizePolicy(permission.resource_type, permission.policy_definition).map((line) => (
           <li key={line}>{line}</li>
         ))}
       </ul>
-      <pre aria-label="Policy JSON" className="overflow-x-auto rounded-lg bg-stone-50 p-3 font-mono text-xs text-stone-800">
+      <pre aria-label="Policy JSON" className="overflow-x-auto rounded-control bg-surface-muted p-3 font-mono text-xs text-fg">
         {JSON.stringify(permission.policy_definition, null, 2)}
       </pre>
     </Card>
@@ -125,11 +126,15 @@ export function PermissionEditor({ existing }: { existing?: PermissionDetail }) 
   const update = useUpdatePermission(existing?.id ?? "");
   const save = isNew ? create : update;
 
-  useEffect(() => {
-    if (!existing) return;
-    setDetails(detailsFrom(existing));
-    setDraft(draftFromPolicy(existing.policy_definition));
-  }, [existing]);
+  // When the server returns a newer version (after a save or refetch), start from it.
+  const [source, setSource] = useState(existing);
+  if (existing !== source) {
+    setSource(existing);
+    if (existing) {
+      setDetails(detailsFrom(existing));
+      setDraft(draftFromPolicy(existing.policy_definition));
+    }
+  }
 
   const set = (changes: Partial<Details>) => {
     setSaved(false);
@@ -178,36 +183,36 @@ export function PermissionEditor({ existing }: { existing?: PermissionDetail }) 
         <Card title="Review permission" description="Check what this permission allows before saving. The server validated this policy.">
           <dl className="mb-5 grid gap-3 text-sm sm:grid-cols-2">
             <div>
-              <dt className="text-stone-500">Name</dt>
-              <dd className="font-medium text-stone-900">{details.name}</dd>
+              <dt className="text-fg-muted">Name</dt>
+              <dd className="font-medium text-fg">{details.name}</dd>
             </div>
             <div>
-              <dt className="text-stone-500">Key</dt>
-              <dd className="font-mono text-stone-900">{details.key}</dd>
+              <dt className="text-fg-muted">Key</dt>
+              <dd className="font-mono text-fg">{details.key}</dd>
             </div>
             <div>
-              <dt className="text-stone-500">Resource and action</dt>
-              <dd className="font-mono text-stone-900">
+              <dt className="text-fg-muted">Resource and action</dt>
+              <dd className="font-mono text-fg">
                 {details.resourceType} · {details.action}
               </dd>
             </div>
             <div>
-              <dt className="text-stone-500">Status</dt>
-              <dd className="text-stone-900">
+              <dt className="text-fg-muted">Status</dt>
+              <dd className="text-fg">
                 {details.isActive ? "Active" : "Inactive"}
                 {details.expiresOn ? `, expires ${details.expiresOn}` : ""}
               </dd>
             </div>
           </dl>
-          <h3 className="text-sm font-medium text-stone-700">What it does</h3>
-          <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-stone-700" aria-label="Policy summary">
+          <h3 className="text-sm font-medium text-fg-secondary">What it does</h3>
+          <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-fg-secondary" aria-label="Policy summary">
             {summarizePolicy(details.resourceType, normalized).map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ul>
           <details className="mt-5">
-            <summary className="cursor-pointer text-sm font-medium text-stone-700">Policy JSON (read-only)</summary>
-            <pre aria-label="Policy JSON" className="mt-2 overflow-x-auto rounded-lg bg-stone-50 p-3 font-mono text-xs text-stone-800">
+            <summary className="cursor-pointer text-sm font-medium text-fg-secondary">Policy JSON (read-only)</summary>
+            <pre aria-label="Policy JSON" className="mt-2 overflow-x-auto rounded-control bg-surface-muted p-3 font-mono text-xs text-fg">
               {JSON.stringify(normalized, null, 2)}
             </pre>
           </details>
@@ -255,7 +260,7 @@ export function PermissionEditor({ existing }: { existing?: PermissionDetail }) 
           />
           <TextField label="Description (optional)" className="sm:col-span-2" value={details.description} onChange={(event) => set({ description: event.target.value })} />
           <div>
-            <label htmlFor="resource-type" className="mb-1.5 block text-sm font-medium text-stone-700">
+            <label htmlFor="resource-type" className="mb-1.5 block text-sm font-medium text-fg-secondary">
               Resource
             </label>
             <input
@@ -272,10 +277,10 @@ export function PermissionEditor({ existing }: { existing?: PermissionDetail }) 
                 </option>
               ))}
             </datalist>
-            <p className="mt-1.5 text-xs text-stone-500">Use database_data for access to tables, columns and rows.</p>
+            <p className="mt-1.5 text-xs text-fg-muted">Use database_data for access to tables, columns and rows.</p>
           </div>
           <div>
-            <label htmlFor="action" className="mb-1.5 block text-sm font-medium text-stone-700">
+            <label htmlFor="action" className="mb-1.5 block text-sm font-medium text-fg-secondary">
               Action
             </label>
             <select id="action" value={details.action} onChange={(event) => set({ action: event.target.value })} className={`${SELECT_CLASSES} w-full`}>
@@ -333,7 +338,7 @@ export function PermissionEditorPage() {
   useDocumentTitle(isNew ? "Create permission" : (detail.data?.name ?? "Permission"));
 
   const back = (
-    <Link to="/admin/permissions" className="inline-flex items-center gap-1.5 text-sm text-stone-600 hover:text-stone-900">
+    <Link to="/admin/permissions" className="inline-flex items-center gap-1.5 rounded-xs text-sm text-fg-muted hover:text-fg">
       <ArrowLeft aria-hidden="true" className="h-4 w-4" /> All permissions
     </Link>
   );
@@ -348,9 +353,8 @@ export function PermissionEditorPage() {
       );
     }
     return (
-      <div className="space-y-6">
-        {back}
-        <h1 className="text-2xl font-semibold tracking-tight text-stone-900">Create permission</h1>
+      <div className="space-y-section">
+        <PageHeader eyebrow={back} title="Create permission" description="Describe what may be done and on which data, review it, then save." />
         <PermissionEditor />
       </div>
     );
@@ -370,44 +374,44 @@ export function PermissionEditorPage() {
   const editable = canManage && !permission.is_system;
 
   return (
-    <div className="space-y-6">
-      {back}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-stone-900">
-            {permission.name}
+    <div className="space-y-section">
+      <PageHeader
+        eyebrow={back}
+        title={permission.name}
+        description={<span className="font-mono">{permission.key}</span>}
+        meta={
+          <>
+            <ActiveBadge active={permission.is_active} />
             {permission.is_system && <SystemTag />}
-          </h1>
-          <p className="mt-1 font-mono text-sm text-stone-500">{permission.key}</p>
-        </div>
-        <ActiveBadge active={permission.is_active} />
-      </div>
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2">{editable ? <PermissionEditor existing={permission} /> : <ReadOnlyPermission permission={permission} />}</div>
-        <div className="space-y-6">
+          </>
+        }
+      />
+      <div className="grid gap-section lg:grid-cols-3">
+        <div className="min-w-0 lg:col-span-2">{editable ? <PermissionEditor existing={permission} /> : <ReadOnlyPermission permission={permission} />}</div>
+        <div className="min-w-0 space-y-section">
           <Card title="Roles" description={permission.roles.length ? undefined : "No role has this permission."}>
             {permission.roles.length > 0 && (
               <ul className="space-y-1 text-sm" aria-label="Roles with this permission">
                 {permission.roles.map((role) => (
                   <li key={role.id}>
-                    <Link to={`/admin/roles/${role.id}`} className="font-medium text-stone-900 hover:underline">
+                    <Link to={`/admin/roles/${role.id}`} className="font-medium text-fg hover:underline">
                       {role.name}
                     </Link>
                   </li>
                 ))}
               </ul>
             )}
-            <p className="mt-3 text-xs text-stone-500">Granted directly to {permission.user_count === 1 ? "1 user" : `${permission.user_count} users`}.</p>
+            <p className="mt-3 text-xs text-fg-muted">Granted directly to {permission.user_count === 1 ? "1 user" : `${permission.user_count} users`}.</p>
           </Card>
           <Card title="History">
             {permission.history.length === 0 ? (
-              <p className="text-sm text-stone-500">No changes recorded.</p>
+              <p className="text-sm text-fg-muted">No changes recorded.</p>
             ) : (
               <ol className="space-y-2 text-sm">
                 {permission.history.map((event) => (
                   <li key={event.id}>
-                    <p className="text-stone-800">{formatEventType(event.event_type)}</p>
-                    <p className="text-xs text-stone-500">{formatDateTime(event.created_at)}</p>
+                    <p className="text-fg">{formatEventType(event.event_type)}</p>
+                    <p className="text-xs text-fg-muted">{formatDateTime(event.created_at)}</p>
                   </li>
                 ))}
               </ol>

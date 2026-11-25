@@ -1,4 +1,4 @@
-import { controlClasses } from "@/components/ui/Input";
+import { controlClasses } from "@/components/ui/controlStyles";
 
 /** Design-system control styling for the RBAC editors' inline (unlabelled-row) controls. */
 export const SELECT_CLASSES = controlClasses({ className: "w-auto" });

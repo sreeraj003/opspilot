@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { permissionKeys } from "@/features/permissions/PermissionsProvider";
+import { permissionKeys } from "@/features/permissions/permissionsContext";
 import { userKeys } from "@/features/users/hooks";
 import { useApiClient } from "@/hooks/useApiClient";
 import * as rbac from "@/services/rbacService";

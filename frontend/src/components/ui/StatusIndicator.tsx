@@ -1,4 +1,4 @@
-import { TONE_CLASSES, type Tone } from "@/components/ui/Badge";
+import { TONE_CLASSES, type Tone } from "@/components/ui/tones";
 import { cn } from "@/utils/cn";
 
 export type StatusTone = Extract<Tone, "success" | "warning" | "danger" | "info" | "neutral">;

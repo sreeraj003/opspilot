@@ -13,6 +13,20 @@ export default defineConfig({
   },
   server: { host: true, port: 5173, strictPort: true },
   preview: { port: 4173, strictPort: true },
+  build: {
+    rolldownOptions: {
+      output: {
+        // Long-lived vendor code in its own cacheable chunks; application code changes more often.
+        codeSplitting: {
+          groups: [
+            { name: "react", test: /node_modules[\\/](react|react-dom|scheduler|react-router)[\\/]/ },
+            { name: "data", test: /node_modules[\\/](@tanstack|zod|react-hook-form|@hookform)[\\/]/ },
+            { name: "icons", test: /node_modules[\\/]lucide-react[\\/]/ },
+          ],
+        },
+      },
+    },
+  },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],

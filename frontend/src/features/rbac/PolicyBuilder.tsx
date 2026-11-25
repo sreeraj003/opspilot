@@ -26,7 +26,7 @@ function ConditionEditor({ node, onChange, onRemove, label }: { node: ConditionD
   const operators = OPERATORS_BY_TYPE[node.valueType];
   const inputType = node.valueType === "date" ? "date" : node.valueType === "number" ? "text" : "text";
   return (
-    <div role="group" aria-label={label} className="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 bg-stone-50/60 p-2">
+    <div role="group" aria-label={label} className="flex flex-wrap items-center gap-2 rounded-control border border-line bg-surface-muted/60 p-2">
       <input
         aria-label={`${label} column`}
         placeholder="column"
@@ -119,9 +119,9 @@ function NodeList({
           return <ConditionEditor key={node.id} node={node} label={name} onChange={(n) => update(index, n)} onRemove={() => remove(index)} />;
         }
         return (
-          <div key={node.id} role="group" aria-label={`${name} (group)`} className="space-y-2 rounded-lg border border-dashed border-stone-300 p-3">
+          <div key={node.id} role="group" aria-label={`${name} (group)`} className="space-y-2 rounded-control border border-dashed border-line-strong p-3">
             <div className="flex items-center justify-between gap-2">
-              <label className="flex items-center gap-2 text-sm text-stone-700">
+              <label className="flex items-center gap-2 text-sm text-fg-secondary">
                 Match
                 <select
                   aria-label={`${name} logic`}
@@ -174,7 +174,7 @@ export function PolicyBuilder({ resourceType, draft, onChange }: { resourceType:
   return (
     <div className="space-y-6">
       <fieldset>
-        <legend className="mb-2 text-sm font-medium text-stone-700">Effect</legend>
+        <legend className="mb-2 text-sm font-medium text-fg-secondary">Effect</legend>
         <div className="flex gap-4 text-sm">
           <label className="flex items-center gap-2">
             <input type="radio" name="effect" checked={draft.effect === "allow"} onChange={() => set({ effect: "allow" })} />
@@ -198,7 +198,7 @@ export function PolicyBuilder({ resourceType, draft, onChange }: { resourceType:
             hint="Tables will be checked against registered schemas once schema registration is available."
           />
           {draft.tables.map((table) => (
-            <div key={table} className="rounded-lg border border-stone-200 p-4">
+            <div key={table} className="rounded-control border border-line p-4">
               <Checkbox
                 label={`All columns of ${table}`}
                 checked={draft.allColumns[table] ?? false}
@@ -218,7 +218,7 @@ export function PolicyBuilder({ resourceType, draft, onChange }: { resourceType:
             </div>
           ))}
           <fieldset className="space-y-2">
-            <legend className="mb-1 text-sm font-medium text-stone-700">Allowed operations</legend>
+            <legend className="mb-1 text-sm font-medium text-fg-secondary">Allowed operations</legend>
             <Checkbox label="Read individual rows" checked={draft.operations.read} onChange={(read) => set({ operations: { ...draft.operations, read } })} />
             <Checkbox
               label="Aggregates only (totals, counts, averages)"
@@ -227,15 +227,15 @@ export function PolicyBuilder({ resourceType, draft, onChange }: { resourceType:
             />
           </fieldset>
           <fieldset>
-            <legend className="mb-1 text-sm font-medium text-stone-700">Row restrictions</legend>
-            <p className="mb-3 text-xs text-stone-500">
+            <legend className="mb-1 text-sm font-medium text-fg-secondary">Row restrictions</legend>
+            <p className="mb-3 text-xs text-fg-muted">
               Only rows matching every restriction are visible. Use a group to allow any of several values.
               {draft.tables.length > 1 && " Write columns as table.column."}
             </p>
             <NodeList nodes={draft.filters} onChange={(filters) => set({ filters })} depth={1} label="Row filter" defaultColumn="" />
           </fieldset>
           <fieldset className="space-y-2">
-            <legend className="mb-1 text-sm font-medium text-stone-700">Results</legend>
+            <legend className="mb-1 text-sm font-medium text-fg-secondary">Results</legend>
             <Checkbox label="Allow exporting results" checked={draft.allowExport} onChange={(allowExport) => set({ allowExport })} />
             <Checkbox label="Allow viewing the generated SQL" checked={draft.allowSqlView} onChange={(allowSqlView) => set({ allowSqlView })} />
           </fieldset>
@@ -244,7 +244,7 @@ export function PolicyBuilder({ resourceType, draft, onChange }: { resourceType:
 
       {draft.effect === "allow" && !isData && (
         <fieldset className="space-y-2">
-          <legend className="mb-1 text-sm font-medium text-stone-700">Results</legend>
+          <legend className="mb-1 text-sm font-medium text-fg-secondary">Results</legend>
           <Checkbox label="Allow exporting" checked={draft.allowExport} onChange={(allowExport) => set({ allowExport })} />
           <Checkbox label="Allow viewing the generated SQL" checked={draft.allowSqlView} onChange={(allowSqlView) => set({ allowSqlView })} />
         </fieldset>
@@ -269,15 +269,15 @@ export function PolicyBuilder({ resourceType, draft, onChange }: { resourceType:
                 onChange={(deniedColumns) => set({ deniedColumns })}
               />
               <fieldset>
-                <legend className="mb-1 text-sm font-medium text-stone-700">Excluded rows</legend>
-                <p className="mb-3 text-xs text-stone-500">Rows matching these conditions are always hidden. Write columns as table.column.</p>
+                <legend className="mb-1 text-sm font-medium text-fg-secondary">Excluded rows</legend>
+                <p className="mb-3 text-xs text-fg-muted">Rows matching these conditions are always hidden. Write columns as table.column.</p>
                 <NodeList nodes={draft.excludedRows} onChange={(excludedRows) => set({ excludedRows })} depth={1} label="Excluded row" defaultColumn="" />
               </fieldset>
             </>
           )}
           {!draft.denyAll && (
             <fieldset className="space-y-2">
-              <legend className="mb-1 text-sm font-medium text-stone-700">Results</legend>
+              <legend className="mb-1 text-sm font-medium text-fg-secondary">Results</legend>
               <Checkbox label="Deny exporting" checked={draft.denyExport} onChange={(denyExport) => set({ denyExport })} />
               <Checkbox label="Deny viewing the generated SQL" checked={draft.denySqlView} onChange={(denySqlView) => set({ denySqlView })} />
             </fieldset>

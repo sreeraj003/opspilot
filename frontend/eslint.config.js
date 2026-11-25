@@ -17,6 +17,9 @@ export default tseslint.config(
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+      // Single-purpose pages (sign in, reset password) focus their first field on purpose;
+      // nothing else uses autoFocus. Dialogs move focus programmatically instead.
+      "jsx-a11y/no-autofocus": ["error", { ignoreNonDOM: true }],
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],
     },
   },

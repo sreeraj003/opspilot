@@ -39,7 +39,7 @@ function AssignRoleForm({ userId, assigned }: { userId: string; assigned: Set<st
   const options = roles.data?.items.filter((role) => !assigned.has(role.id)) ?? [];
   return (
     <form
-      className="mt-4 space-y-2 border-t border-stone-100 pt-4"
+      className="mt-4 space-y-2 border-t border-line-subtle pt-4"
       onSubmit={(event) => {
         event.preventDefault();
         if (!roleId) return;
@@ -61,7 +61,7 @@ function AssignRoleForm({ userId, assigned }: { userId: string; assigned: Set<st
         </Button>
       </div>
       {assign.isError && (
-        <p role="alert" className="text-sm font-medium text-rose-600">
+        <p role="alert" className="text-sm font-medium text-danger-text">
           {errorMessage(assign.error, "The role could not be assigned.")}
         </p>
       )}
@@ -78,7 +78,7 @@ function AssignPermissionForm({ userId, assigned }: { userId: string; assigned: 
   const options = permissions.data?.items.filter((p) => !assigned.has(p.id) && !ADMINISTRATOR_ONLY.has(p.key)) ?? [];
   return (
     <form
-      className="mt-4 space-y-2 border-t border-stone-100 pt-4"
+      className="mt-4 space-y-2 border-t border-line-subtle pt-4"
       onSubmit={(event) => {
         event.preventDefault();
         if (!permissionId) return;
@@ -106,9 +106,9 @@ function AssignPermissionForm({ userId, assigned }: { userId: string; assigned: 
           Add
         </Button>
       </div>
-      <p className="text-xs text-stone-500">Deny removes this permission even when one of the user's roles grants it.</p>
+      <p className="text-xs text-fg-muted">Deny removes this permission even when one of the user's roles grants it.</p>
       {assign.isError && (
-        <p role="alert" className="text-sm font-medium text-rose-600">
+        <p role="alert" className="text-sm font-medium text-danger-text">
           {errorMessage(assign.error, "The permission could not be assigned.")}
         </p>
       )}
@@ -117,42 +117,42 @@ function AssignPermissionForm({ userId, assigned }: { userId: string; assigned: 
 }
 
 export function EffectivePermissionsView({ effective }: { effective: EffectivePermissions }) {
-  if (!effective.is_active) return <p className="text-sm text-stone-600">This account is inactive, so it has no access.</p>;
+  if (!effective.is_active) return <p className="text-sm text-fg-secondary">This account is inactive, so it has no access.</p>;
   const data = effective.data_access.flatMap((entry) => entry.tables.map((table) => ({ ...table, action: entry.action })));
   return (
     <div className="space-y-4 text-sm">
-      {effective.is_administrator && <p className="text-stone-700">Administrator: can manage users, roles and permissions. Data access still needs explicit permissions.</p>}
+      {effective.is_administrator && <p className="text-fg-secondary">Administrator: can manage users, roles and permissions. Data access still needs explicit permissions.</p>}
       <div>
-        <h3 className="font-medium text-stone-700">Permissions</h3>
+        <h3 className="font-medium text-fg-secondary">Permissions</h3>
         {effective.permission_keys.length === 0 ? (
-          <p className="mt-1 text-stone-500">None. Without permissions, every request is denied.</p>
+          <p className="mt-1 text-fg-muted">None. Without permissions, every request is denied.</p>
         ) : (
           <ul className="mt-1 flex flex-wrap gap-1.5" aria-label="Effective permissions">
             {effective.permission_keys.map((key) => (
-              <li key={key} className="rounded-md bg-stone-100 px-2 py-0.5 font-mono text-xs text-stone-800">
+              <li key={key} className="rounded-sm bg-surface-strong px-2 py-0.5 font-mono text-xs text-fg">
                 {key}
               </li>
             ))}
           </ul>
         )}
         {effective.revoked_permission_keys.length > 0 && (
-          <p className="mt-2 text-xs text-stone-500">Denied directly: {effective.revoked_permission_keys.join(", ")}</p>
+          <p className="mt-2 text-xs text-fg-muted">Denied directly: {effective.revoked_permission_keys.join(", ")}</p>
         )}
       </div>
       {data.length > 0 && (
         <div>
-          <h3 className="font-medium text-stone-700">Data access</h3>
+          <h3 className="font-medium text-fg-secondary">Data access</h3>
           <ul className="mt-1 space-y-2" aria-label="Data access">
             {data.map((table) => (
-              <li key={`${table.action}:${table.table}`} className="rounded-lg border border-stone-200 p-3">
-                <p className="font-mono text-xs font-medium text-stone-900">
+              <li key={`${table.action}:${table.table}`} className="rounded-control border border-line p-3">
+                <p className="font-mono text-xs font-medium text-fg">
                   {table.table} · {table.action}
                 </p>
-                <p className="mt-1 text-xs text-stone-600">Columns: {table.columns.some((c) => c === "*" || c.endsWith(".*")) ? "all" : table.columns.join(", ")}</p>
-                {table.denied_columns.length > 0 && <p className="text-xs text-stone-600">Hidden columns: {table.denied_columns.join(", ")}</p>}
-                <p className="text-xs text-stone-600">Operations: {table.operations.join(", ")}</p>
-                <p className="text-xs text-stone-600">Rows: {table.row_filter ? describeNode(table.row_filter) : "all"}</p>
-                <p className="text-xs text-stone-600">
+                <p className="mt-1 text-xs text-fg-secondary">Columns: {table.columns.some((c) => c === "*" || c.endsWith(".*")) ? "all" : table.columns.join(", ")}</p>
+                {table.denied_columns.length > 0 && <p className="text-xs text-fg-secondary">Hidden columns: {table.denied_columns.join(", ")}</p>}
+                <p className="text-xs text-fg-secondary">Operations: {table.operations.join(", ")}</p>
+                <p className="text-xs text-fg-secondary">Rows: {table.row_filter ? describeNode(table.row_filter) : "all"}</p>
+                <p className="text-xs text-fg-secondary">
                   Export {table.allow_export ? "allowed" : "not allowed"} · SQL view {table.allow_sql_view ? "allowed" : "not allowed"}
                 </p>
               </li>
@@ -162,8 +162,8 @@ export function EffectivePermissionsView({ effective }: { effective: EffectivePe
       )}
       {effective.restrictions.length > 0 && (
         <div>
-          <h3 className="font-medium text-stone-700">Restrictions</h3>
-          <ul className="mt-1 list-inside list-disc text-stone-600">
+          <h3 className="font-medium text-fg-secondary">Restrictions</h3>
+          <ul className="mt-1 list-inside list-disc text-fg-secondary">
             {effective.restrictions.map((r) => (
               <li key={`${r.key}:${r.source}`}>{r.name}</li>
             ))}
@@ -199,16 +199,16 @@ export function UserAccessSection({ userId }: { userId: string }) {
         ) : roles.isError ? (
           <Alert tone="error">{errorMessage(roles.error)}</Alert>
         ) : roles.data.length === 0 ? (
-          <p className="text-sm text-stone-500">No roles assigned.</p>
+          <p className="text-sm text-fg-muted">No roles assigned.</p>
         ) : (
-          <ul className="divide-y divide-stone-100 text-sm" aria-label="Assigned roles">
+          <ul className="divide-y divide-line-subtle text-sm" aria-label="Assigned roles">
             {roles.data.map((assignment) => (
               <li key={assignment.role.id} className="flex items-center justify-between gap-3 py-2">
                 <div>
-                  <Link to={`/admin/roles/${assignment.role.id}`} className="font-medium text-stone-900 hover:underline">
+                  <Link to={`/admin/roles/${assignment.role.id}`} className="font-medium text-fg hover:underline">
                     {assignment.role.name}
                   </Link>
-                  <p className="text-xs text-stone-500">
+                  <p className="text-xs text-fg-muted">
                     {assignment.is_expired ? "Expired" : assignment.expires_at ? `Until ${formatDate(assignment.expires_at)}` : "No expiry"}
                     {!assignment.role.is_active ? " · role inactive" : ""}
                   </p>
@@ -235,17 +235,17 @@ export function UserAccessSection({ userId }: { userId: string }) {
         ) : direct.isError ? (
           <Alert tone="error">{errorMessage(direct.error)}</Alert>
         ) : direct.data.length === 0 ? (
-          <p className="text-sm text-stone-500">None.</p>
+          <p className="text-sm text-fg-muted">None.</p>
         ) : (
-          <ul className="divide-y divide-stone-100 text-sm" aria-label="Direct permissions">
+          <ul className="divide-y divide-line-subtle text-sm" aria-label="Direct permissions">
             {direct.data.map((assignment) => (
               <li key={assignment.permission.id} className="flex items-center justify-between gap-3 py-2">
                 <div>
-                  <p className="font-medium text-stone-900">
+                  <p className="font-medium text-fg">
                     {assignment.assignment_type === "deny" ? "Denied: " : ""}
                     {assignment.permission.name}
                   </p>
-                  <p className="font-mono text-xs text-stone-500">
+                  <p className="font-mono text-xs text-fg-muted">
                     {assignment.permission.key}
                     {assignment.expires_at ? ` · until ${formatDate(assignment.expires_at)}` : ""}
                   </p>

@@ -71,7 +71,7 @@ export function LoginPage() {
           {...register("password")}
         />
         <div className="flex justify-end">
-          <Link to="/forgot-password" className="text-sm font-medium text-stone-600 underline-offset-4 hover:text-stone-900 hover:underline">
+          <Link to="/forgot-password" className="text-sm font-medium text-fg-secondary underline-offset-4 hover:text-fg hover:underline">
             Forgot password?
           </Link>
         </div>

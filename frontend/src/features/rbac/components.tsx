@@ -4,7 +4,8 @@ import { useId, useState, type ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Checkbox as BaseCheckbox } from "@/components/ui/Checkbox";
-import { controlClasses, SearchInput as BaseSearchInput } from "@/components/ui/Input";
+import { controlClasses } from "@/components/ui/controlStyles";
+import { SearchInput as BaseSearchInput } from "@/components/ui/Input";
 import { StatusIndicator } from "@/components/ui/StatusIndicator";
 
 export { Card } from "@/components/ui/Card";

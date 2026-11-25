@@ -1,3 +1,4 @@
+import { lazy } from "react";
 import type { RouteObject } from "react-router";
 
 import type { RouteHandle } from "@/app/routeHandle";
@@ -12,13 +13,16 @@ import { ForgotPasswordPage } from "@/pages/ForgotPasswordPage";
 import { HomePage } from "@/pages/HomePage";
 import { LoginPage } from "@/pages/LoginPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
-import { PermissionEditorPage } from "@/pages/PermissionEditorPage";
-import { PermissionsPage } from "@/pages/PermissionsPage";
 import { ResetPasswordPage } from "@/pages/ResetPasswordPage";
-import { RoleDetailPage } from "@/pages/RoleDetailPage";
-import { RolesPage } from "@/pages/RolesPage";
-import { UserDetailPage } from "@/pages/UserDetailPage";
-import { UsersPage } from "@/pages/UsersPage";
+
+// Administration pages load on demand (AppLayout's <Suspense> shows a loading state), keeping the
+// first download small for people who never open them.
+const UsersPage = lazy(() => import("@/pages/UsersPage").then((m) => ({ default: m.UsersPage })));
+const UserDetailPage = lazy(() => import("@/pages/UserDetailPage").then((m) => ({ default: m.UserDetailPage })));
+const RolesPage = lazy(() => import("@/pages/RolesPage").then((m) => ({ default: m.RolesPage })));
+const RoleDetailPage = lazy(() => import("@/pages/RoleDetailPage").then((m) => ({ default: m.RoleDetailPage })));
+const PermissionsPage = lazy(() => import("@/pages/PermissionsPage").then((m) => ({ default: m.PermissionsPage })));
+const PermissionEditorPage = lazy(() => import("@/pages/PermissionEditorPage").then((m) => ({ default: m.PermissionEditorPage })));
 
 const crumb = (label: RouteHandle["crumb"], link = true): RouteHandle => ({ crumb: label, link });
 

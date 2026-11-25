@@ -1,15 +1,7 @@
 import { cn } from "@/utils/cn";
+import { initials } from "@/utils/initials";
 
 const SIZES = { sm: "h-7 w-7 text-2xs", md: "h-8 w-8 text-xs", lg: "h-10 w-10 text-sm" };
-
-/** Up to two initials from a display name ("Ada Lovelace" → "AL"). */
-export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  const first = parts[0]!.charAt(0);
-  const last = parts.length > 1 ? parts[parts.length - 1]!.charAt(0) : "";
-  return (first + last).toUpperCase();
-}
 
 export interface AvatarProps {
   name: string;

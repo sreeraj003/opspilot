@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ConfirmDialog, Dialog } from "@/components/ui/Dialog";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { controlClasses } from "@/components/ui/Input";
+import { controlClasses } from "@/components/ui/controlStyles";
 import { PageHeader } from "@/components/ui/Layout";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";

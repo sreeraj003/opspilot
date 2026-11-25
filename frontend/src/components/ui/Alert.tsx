@@ -1,7 +1,7 @@
 import { AlertCircle, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { TONE_CLASSES } from "@/components/ui/Badge";
+import { TONE_CLASSES } from "@/components/ui/tones";
 import { cn } from "@/utils/cn";
 
 type AlertTone = "error" | "success" | "info" | "warning";

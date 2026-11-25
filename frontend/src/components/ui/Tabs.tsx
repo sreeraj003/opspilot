@@ -27,7 +27,7 @@ export function Tabs({ items, value, onValueChange, label, className }: TabsProp
   const listRef = useRef<HTMLDivElement>(null);
   const enabled = items.filter((item) => !item.disabled);
 
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const index = enabled.findIndex((item) => item.id === value);
     let next: number | null = null;
     if (event.key === "ArrowRight") next = (index + 1) % enabled.length;
@@ -47,7 +47,6 @@ export function Tabs({ items, value, onValueChange, label, className }: TabsProp
         ref={listRef}
         role="tablist"
         aria-label={label}
-        onKeyDown={onKeyDown}
         className="-mx-1 flex gap-1 overflow-x-auto border-b border-line px-1"
       >
         {items.map((item) => {
@@ -64,6 +63,7 @@ export function Tabs({ items, value, onValueChange, label, className }: TabsProp
               tabIndex={selected ? 0 : -1}
               disabled={item.disabled}
               onClick={() => onValueChange(item.id)}
+              onKeyDown={onKeyDown}
               className={cn(
                 "-mb-px border-b-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors disabled:opacity-50",
                 selected ? "border-accent text-fg" : "border-transparent text-fg-muted hover:border-line-strong hover:text-fg",

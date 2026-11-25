@@ -2,6 +2,8 @@ import { Database, MonitorSmartphone, RefreshCw, Server } from "lucide-react";
 
 import { DetailList } from "@/components/DetailList";
 import { StatusCard } from "@/components/StatusCard";
+import { Button } from "@/components/ui/Button";
+import { SectionHeader } from "@/components/ui/Layout";
 import type { StatusTone } from "@/components/ui/StatusIndicator";
 import { useBackendHealth, useDatabaseHealth } from "@/hooks/useSystemStatus";
 import { ApiError } from "@/services/apiClient";
@@ -30,25 +32,26 @@ export function SystemStatusPanel() {
 
   return (
     <section aria-labelledby="system-status-heading">
-      <div className="mb-4 flex items-end justify-between gap-4">
-        <div>
-          <h2 id="system-status-heading" className="text-base font-semibold text-stone-900">
-            System status
-          </h2>
-          <p className="text-sm text-stone-500">Live connectivity between this application and its services.</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            void health.refetch();
-            void database.refetch();
-          }}
-          disabled={refreshing}
-          className="inline-flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 shadow-sm transition hover:bg-stone-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 disabled:opacity-60"
-        >
-          <RefreshCw aria-hidden="true" className={cn("h-4 w-4", refreshing && "animate-spin")} />
-          Refresh
-        </button>
+      <div className="mb-4">
+        <SectionHeader
+          id="system-status-heading"
+          title="System status"
+          description="Live connectivity between this application and its services."
+          actions={
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                void health.refetch();
+                void database.refetch();
+              }}
+              disabled={refreshing}
+            >
+              <RefreshCw aria-hidden="true" className={cn("h-4 w-4", refreshing && "animate-spin")} />
+              Refresh
+            </Button>
+          }
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -105,7 +108,7 @@ export function SystemStatusPanel() {
                 },
               ]}
             />
-            {database.data.detail && <p className="mt-3 text-stone-500">{database.data.detail}</p>}
+            {database.data.detail && <p className="mt-3 text-fg-muted">{database.data.detail}</p>}
           </StatusCard>
         )}
       </div>
