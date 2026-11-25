@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { StatusBadge, type StatusTone } from "@/components/StatusBadge";
+import { StatusIndicator, type StatusTone } from "@/components/ui/StatusIndicator";
 
 interface StatusCardProps {
   title: string;
@@ -26,7 +26,7 @@ export function StatusCard({ title, icon: Icon, tone, statusLabel, pending = fal
           </span>
           <h3 className="text-sm font-semibold text-stone-900">{title}</h3>
         </div>
-        <StatusBadge tone={tone} label={statusLabel} pulse={pending} />
+        <StatusIndicator tone={tone} label={statusLabel} pulse={pending} />
       </div>
       {children && <div className="mt-4 text-sm text-stone-600">{children}</div>}
     </section>

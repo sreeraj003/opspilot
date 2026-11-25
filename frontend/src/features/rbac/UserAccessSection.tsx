@@ -8,7 +8,8 @@ import { ConfirmDialog } from "@/components/ui/Dialog";
 import { Spinner } from "@/components/ui/Spinner";
 import { useAuth } from "@/features/auth/authContext";
 import { usePermissions } from "@/features/permissions/permissionsContext";
-import { Card, FIELD_CLASSES, SELECT_CLASSES } from "@/features/rbac/components";
+import { Card } from "@/features/rbac/components";
+import { FIELD_CLASSES, SELECT_CLASSES } from "@/features/rbac/fieldClasses";
 import {
   useAssignUserPermission,
   useAssignUserRole,

@@ -2,7 +2,7 @@ import { Database, MonitorSmartphone, RefreshCw, Server } from "lucide-react";
 
 import { DetailList } from "@/components/DetailList";
 import { StatusCard } from "@/components/StatusCard";
-import type { StatusTone } from "@/components/StatusBadge";
+import type { StatusTone } from "@/components/ui/StatusIndicator";
 import { useBackendHealth, useDatabaseHealth } from "@/hooks/useSystemStatus";
 import { ApiError } from "@/services/apiClient";
 import { appConfig } from "@/services/config";

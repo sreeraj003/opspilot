@@ -8,7 +8,9 @@ import { TextField } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/features/permissions/permissionsContext";
 import { PolicyBuilder } from "@/features/rbac/PolicyBuilder";
-import { ActiveBadge, Card, Checkbox, formatEventType, SELECT_CLASSES, INPUT_CLASSES, SystemTag } from "@/features/rbac/components";
+import { ActiveBadge, Card, Checkbox, SystemTag } from "@/features/rbac/components";
+import { INPUT_CLASSES, SELECT_CLASSES } from "@/features/rbac/fieldClasses";
+import { formatEventType } from "@/utils/format";
 import { KEY_PATTERN, slugify } from "@/features/rbac/keys";
 import { useCreatePermission, usePermission, useUpdatePermission, useValidatePolicy } from "@/features/rbac/hooks";
 import {

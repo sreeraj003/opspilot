@@ -32,7 +32,7 @@ export function Alert({ tone = "info", title, children, className }: AlertProps)
       <Icon aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
       <div className="min-w-0">
         {title && <p className="font-medium">{title}</p>}
-        <div className={cn(title && "mt-0.5 opacity-90")}>{children}</div>
+        <div className={cn(Boolean(title) && "mt-0.5 opacity-90")}>{children}</div>
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import { Check } from "lucide-react";
 import { useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Link } from "react-router";
 
@@ -5,7 +6,17 @@ import { useDismiss } from "@/components/ui/useOverlay";
 import { cn } from "@/utils/cn";
 
 export type DropdownMenuItem =
-  | { type?: "action"; id: string; label: ReactNode; icon?: ReactNode; onSelect: () => void; tone?: "default" | "danger"; disabled?: boolean }
+  | {
+      type?: "action";
+      id: string;
+      label: ReactNode;
+      icon?: ReactNode;
+      onSelect: () => void;
+      tone?: "default" | "danger";
+      disabled?: boolean;
+      /** Makes the item a radio choice (role="menuitemradio") showing whether it is selected. */
+      checked?: boolean;
+    }
   | { type: "link"; id: string; label: ReactNode; icon?: ReactNode; to: string }
   | { type: "separator"; id: string }
   | { type: "label"; id: string; label: ReactNode };
@@ -40,7 +51,7 @@ export function DropdownMenu({ trigger, items, align = "end", side = "bottom", l
   const triggerId = useId();
   const menuId = useId();
 
-  const menuItems = () => Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])') ?? []);
+  const menuItems = () => Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([aria-disabled="true"])') ?? []);
   const focusItem = (index: number) => {
     const all = menuItems();
     if (all.length === 0) return;
@@ -130,7 +141,8 @@ export function DropdownMenu({ trigger, items, align = "end", side = "bottom", l
               <button
                 key={item.id}
                 type="button"
-                role="menuitem"
+                role={item.checked === undefined ? "menuitem" : "menuitemradio"}
+                aria-checked={item.checked}
                 tabIndex={-1}
                 aria-disabled={item.disabled || undefined}
                 className={itemClass(item.tone)}
@@ -141,7 +153,8 @@ export function DropdownMenu({ trigger, items, align = "end", side = "bottom", l
                 }}
               >
                 {item.icon}
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {item.checked && <Check aria-hidden="true" className="h-4 w-4 text-accent-text" />}
               </button>
             );
           })}

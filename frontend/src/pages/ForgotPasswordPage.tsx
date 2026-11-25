@@ -8,7 +8,7 @@ import { z } from "zod";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { TextField } from "@/components/ui/Field";
-import { AuthLayout } from "@/features/auth/AuthLayout";
+import { AuthCard } from "@/features/auth/AuthCard";
 import { emailSchema } from "@/features/auth/validation";
 import { useApiClient } from "@/hooks/useApiClient";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
@@ -39,7 +39,7 @@ export function ForgotPasswordPage() {
   });
 
   return (
-    <AuthLayout
+    <AuthCard
       title="Reset your password"
       subtitle="Enter your account's email address. If you cannot receive a reset link, ask your administrator for one."
     >
@@ -58,6 +58,6 @@ export function ForgotPasswordPage() {
         <ArrowLeft aria-hidden="true" className="h-4 w-4" />
         Back to sign in
       </Link>
-    </AuthLayout>
+    </AuthCard>
   );
 }

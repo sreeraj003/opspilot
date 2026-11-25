@@ -1,7 +1,8 @@
 import { FolderPlus, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
-import { Checkbox, FIELD_CLASSES, SELECT_CLASSES, TagInput } from "@/features/rbac/components";
+import { Checkbox, TagInput } from "@/features/rbac/components";
+import { FIELD_CLASSES, SELECT_CLASSES } from "@/features/rbac/fieldClasses";
 import {
   DATA_RESOURCE_TYPE,
   MAX_DEPTH,

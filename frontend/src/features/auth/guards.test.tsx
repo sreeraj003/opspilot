@@ -42,7 +42,7 @@ describe("protected routes", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
-    expect(screen.getByText("ada@example.com")).toBeInTheDocument();
+    expect(within(screen.getByRole("main")).getByText("ada@example.com")).toBeInTheDocument();
   });
 
   it("hides administrator pages from ordinary users", async () => {
@@ -84,6 +84,10 @@ describe("protected routes", () => {
     const { router } = renderRoute("/", fetchImpl, makeCurrentUser());
 
     await user.click(await screen.findByRole("button", { name: "Sign out" }));
+    // A deliberate sign-out is confirmed first; cancelling keeps the session.
+    const confirm = screen.getByRole("alertdialog", { name: "Sign out?" });
+    expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.click(within(confirm).getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
     const logout = fetchImpl.mock.calls.find(([url]) => String(url).endsWith("/auth/logout"))!;

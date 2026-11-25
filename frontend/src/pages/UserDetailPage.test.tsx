@@ -36,19 +36,44 @@ describe("UserDetailPage", () => {
     expect(document.body.textContent).not.toMatch(/password_hash|argon2/i);
   });
 
-  it("updates permitted fields", async () => {
+  it("updates permitted fields in the edit dialog", async () => {
     const user = userEvent.setup();
     const fetchImpl = routes({ [`PATCH ${BASE}`]: () => jsonResponse({ ...grace, full_name: "Admiral Hopper" }) });
     renderRoute(`/admin/users/${grace.id}`, fetchImpl, admin);
 
-    const name = await screen.findByLabelText("Full name");
+    await user.click(await screen.findByRole("button", { name: "Edit details" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit user" });
+    const save = within(dialog).getByRole("button", { name: "Save changes" });
+    expect(save).toBeDisabled();
+    const name = within(dialog).getByLabelText(/Full name/);
+    expect(name).toHaveFocus();
     await user.clear(name);
     await user.type(name, "Admiral Hopper");
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await user.click(save);
 
     await waitFor(() => expect(fetchImpl.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(true));
     const patch = fetchImpl.mock.calls.find(([, init]) => init?.method === "PATCH")!;
     expect(JSON.parse(String(patch[1]?.body))).toEqual({ full_name: "Admiral Hopper", email: "grace@example.com", username: null });
+    expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Edit user" })).not.toBeInTheDocument();
+  });
+
+  it("validates the edit form before saving", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = routes();
+    renderRoute(`/admin/users/${grace.id}`, fetchImpl, admin);
+
+    await user.click(await screen.findByRole("button", { name: "Edit details" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit user" });
+    await user.clear(within(dialog).getByLabelText(/Email/));
+    await user.type(within(dialog).getByLabelText(/Email/), "not-an-email");
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+    const email = within(dialog).getByLabelText(/Email/);
+    expect(await within(dialog).findByText("Enter a valid email address.")).toBeInTheDocument();
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(email.getAttribute("aria-describedby")).toContain(within(dialog).getByText("Enter a valid email address.").id);
+    expect(fetchImpl.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
   });
 
   it("revokes sessions after confirmation", async () => {

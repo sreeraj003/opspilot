@@ -7,7 +7,7 @@ import { z } from "zod";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { PasswordField } from "@/components/ui/Field";
-import { AuthLayout } from "@/features/auth/AuthLayout";
+import { AuthCard } from "@/features/auth/AuthCard";
 import { newPasswordSchema, PASSWORD_HINT } from "@/features/auth/validation";
 import { useApiClient } from "@/hooks/useApiClient";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
@@ -55,18 +55,18 @@ export function ResetPasswordPage() {
 
   if (result === "invalid") {
     return (
-      <AuthLayout title="Link invalid or expired">
+      <AuthCard title="Link invalid or expired">
         <Alert tone="error">This password reset link is invalid, has already been used, or has expired.</Alert>
         <Link to="/forgot-password" className="mt-6 inline-flex text-sm font-medium text-stone-900 underline underline-offset-4">
           Request a new link
         </Link>
-      </AuthLayout>
+      </AuthCard>
     );
   }
 
   if (result === "done") {
     return (
-      <AuthLayout title="Password updated">
+      <AuthCard title="Password updated">
         <Alert tone="success">Your password has been reset and all your sessions were signed out.</Alert>
         <Link
           to="/login"
@@ -74,12 +74,12 @@ export function ResetPasswordPage() {
         >
           Sign in
         </Link>
-      </AuthLayout>
+      </AuthCard>
     );
   }
 
   return (
-    <AuthLayout title="Choose a new password">
+    <AuthCard title="Choose a new password">
       <form onSubmit={onSubmit} noValidate className="space-y-4">
         {failure && <Alert tone="error">{failure}</Alert>}
         <PasswordField
@@ -100,6 +100,6 @@ export function ResetPasswordPage() {
           Reset password
         </Button>
       </form>
-    </AuthLayout>
+    </AuthCard>
   );
 }

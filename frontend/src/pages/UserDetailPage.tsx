@@ -1,101 +1,46 @@
-import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeft, Copy, KeyRound, LogOut, Power, Trash2 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
-import { useForm } from "react-hook-form";
+import { ArrowLeft, Copy, KeyRound, LogOut, Monitor, Pencil, Power, Trash2 } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { z } from "zod";
 
 import { DetailList } from "@/components/DetailList";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { ConfirmDialog, Dialog } from "@/components/ui/Dialog";
-import { TextField } from "@/components/ui/Field";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { controlClasses } from "@/components/ui/Input";
+import { PageHeader } from "@/components/ui/Layout";
+import { SkeletonText } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
+import { useToast } from "@/components/ui/toastContext";
 import { useAuth } from "@/features/auth/authContext";
 import { usePermissions } from "@/features/permissions/permissionsContext";
-import { emailSchema } from "@/features/auth/validation";
 import { UserAccessSection } from "@/features/rbac/UserAccessSection";
-import { usernameSchema } from "@/features/users/CreateUserDialog";
+import { EditUserDialog } from "@/features/users/EditUserDialog";
 import {
   useDeleteUser,
   useRevokeUserSessions,
   useSetUserActive,
   useStartPasswordReset,
-  useUpdateUser,
   useUserDetail,
   useUserSessions,
 } from "@/features/users/hooks";
 import { UserStatusBadge } from "@/features/users/UserStatusBadge";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { ApiError } from "@/services/apiClient";
-import type { AdminPasswordResetResponse, UserDetail } from "@/types/auth";
+import type { AdminPasswordResetResponse } from "@/types/auth";
 import { errorMessage } from "@/utils/errors";
 import { formatDateTime } from "@/utils/format";
 
-const editSchema = z.object({
-  full_name: z.string().trim().min(1, "Enter the person's name.").max(200, "Use at most 200 characters."),
-  email: emailSchema,
-  username: usernameSchema,
-});
+function BackLink() {
+  return (
+    <Link to="/admin/users" className="inline-flex items-center gap-1.5 rounded-xs text-sm text-fg-muted hover:text-fg">
+      <ArrowLeft aria-hidden="true" className="h-4 w-4" /> All users
+    </Link>
+  );
+}
 
-type EditValues = z.infer<typeof editSchema>;
 type PendingAction = "deactivate" | "activate" | "revoke" | "reset" | "delete" | null;
-
-function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
-  const id = title.toLowerCase().replace(/\W+/g, "-");
-  return (
-    <section aria-labelledby={id} className="rounded-2xl border border-stone-200 bg-white p-6">
-      <h2 id={id} className="text-base font-semibold text-stone-900">
-        {title}
-      </h2>
-      {description && <p className="mt-1 text-sm text-stone-500">{description}</p>}
-      <div className="mt-5">{children}</div>
-    </section>
-  );
-}
-
-function EditUserForm({ user }: { user: UserDetail }) {
-  const update = useUpdateUser(user.id);
-  const [saved, setSaved] = useState(false);
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors, isSubmitting, isDirty },
-  } = useForm<EditValues>({
-    resolver: zodResolver(editSchema),
-    defaultValues: { full_name: user.full_name, email: user.email, username: user.username ?? "" },
-  });
-
-  useEffect(() => {
-    reset({ full_name: user.full_name, email: user.email, username: user.username ?? "" });
-  }, [user, reset]);
-
-  const onSubmit = handleSubmit(async (values) => {
-    setSaved(false);
-    try {
-      await update.mutateAsync({ ...values, username: values.username || null });
-      setSaved(true);
-    } catch {
-      // Shown below from the mutation state.
-    }
-  });
-
-  return (
-    <form onSubmit={onSubmit} noValidate className="space-y-4">
-      {saved && !isDirty && <Alert tone="success">Changes saved.</Alert>}
-      {update.isError && <Alert tone="error">{errorMessage(update.error, "Changes could not be saved.")}</Alert>}
-      <div className="grid gap-4 sm:grid-cols-2">
-        <TextField label="Full name" error={errors.full_name?.message} {...register("full_name")} />
-        <TextField label="Email" type="email" error={errors.email?.message} {...register("email")} />
-        <TextField label="Username (optional)" error={errors.username?.message} {...register("username")} />
-      </div>
-      <Button type="submit" loading={isSubmitting} disabled={!isDirty}>
-        Save changes
-      </Button>
-    </form>
-  );
-}
 
 function ResetLinkDialog({ result, onClose }: { result: AdminPasswordResetResponse | null; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
@@ -116,9 +61,9 @@ function ResetLinkDialog({ result, onClose }: { result: AdminPasswordResetRespon
             aria-label="Password reset link"
             value={result.reset_url}
             onFocus={(event) => event.currentTarget.select()}
-            className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 font-mono text-xs text-stone-800"
+            className={controlClasses({ className: "bg-surface-muted font-mono text-xs" })}
           />
-          <p className="text-xs text-stone-500">Expires {formatDateTime(result.expires_at)}.</p>
+          <p className="text-xs text-fg-muted">Expires {formatDateTime(result.expires_at)}.</p>
           <Button
             variant="secondary"
             onClick={async () => {
@@ -148,7 +93,8 @@ export function UserDetailPage() {
   const resetLink = useStartPasswordReset();
   const remove = useDeleteUser();
   const [pending, setPending] = useState<PendingAction>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const toast = useToast();
   const [resetResult, setResetResult] = useState<AdminPasswordResetResponse | null>(null);
   useDocumentTitle(detail.data?.full_name ?? "User");
 
@@ -157,10 +103,14 @@ export function UserDetailPage() {
     const missing = detail.error instanceof ApiError && detail.error.status === 404;
     return (
       <div className="space-y-4">
-        <Link to="/admin/users" className="inline-flex items-center gap-1.5 text-sm text-stone-600 hover:text-stone-900">
-          <ArrowLeft aria-hidden="true" className="h-4 w-4" /> All users
-        </Link>
-        <Alert tone="error">{missing ? "This user does not exist or was deleted." : errorMessage(detail.error)}</Alert>
+        <BackLink />
+        <Card padding="none">
+          <ErrorState
+            title={missing ? "User not found" : "The user could not be loaded"}
+            message={missing ? "This user does not exist or was deleted." : errorMessage(detail.error)}
+            onRetry={missing ? undefined : () => void detail.refetch()}
+          />
+        </Card>
       </div>
     );
   }
@@ -170,18 +120,18 @@ export function UserDetailPage() {
   const actionError = [setActive, revoke, resetLink, remove].find((mutation) => mutation.isError)?.error;
 
   const run = async (action: Exclude<PendingAction, null>) => {
-    setNotice(null);
     try {
       if (action === "activate" || action === "deactivate") {
         await setActive.mutateAsync({ id: user.id, active: action === "activate" });
-        setNotice(action === "activate" ? "Account activated." : "Account deactivated and signed out everywhere.");
+        toast.notify({ title: action === "activate" ? "Account activated." : "Account deactivated and signed out everywhere." });
       } else if (action === "revoke") {
         const { revoked_sessions } = await revoke.mutateAsync(user.id);
-        setNotice(`${revoked_sessions} session${revoked_sessions === 1 ? "" : "s"} signed out.`);
+        toast.notify({ title: `${revoked_sessions} session${revoked_sessions === 1 ? "" : "s"} signed out.` });
       } else if (action === "reset") {
         setResetResult(await resetLink.mutateAsync(user.id));
       } else {
         await remove.mutateAsync(user.id);
+        toast.notify({ title: "User deleted", description: `${user.full_name} was removed.` });
         navigate("/admin/users", { replace: true });
         return;
       }
@@ -223,56 +173,54 @@ export function UserDetailPage() {
   const dialog = pending ? dialogs[pending] : null;
 
   return (
-    <div className="space-y-6">
-      <Link to="/admin/users" className="inline-flex items-center gap-1.5 text-sm text-stone-600 hover:text-stone-900">
-        <ArrowLeft aria-hidden="true" className="h-4 w-4" /> All users
-      </Link>
+    <div className="space-y-section">
+      <PageHeader
+        eyebrow={<BackLink />}
+        title={user.full_name}
+        description={user.email}
+        meta={<UserStatusBadge user={user} />}
+        actions={
+          canManage && (
+            <Button variant="secondary" onClick={() => setEditing(true)}>
+              <Pencil aria-hidden="true" className="h-4 w-4" />
+              Edit details
+            </Button>
+          )
+        }
+      />
 
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-stone-900">{user.full_name}</h1>
-          <p className="mt-1 text-sm text-stone-500">{user.email}</p>
-        </div>
-        <UserStatusBadge user={user} />
-      </div>
-
-      {notice && <Alert tone="success">{notice}</Alert>}
-
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          {canManage && (
-            <Section title="Details" description="Status and privileges are changed with the actions on this page only.">
-              <EditUserForm user={user} />
-            </Section>
-          )}
-
-          <Section title="Active sessions" description="Browsers where this user is currently signed in.">
+      <div className="grid gap-section lg:grid-cols-3">
+        <div className="min-w-0 space-y-section lg:col-span-2">
+          <Card title="Active sessions" description="Browsers where this user is currently signed in.">
             {sessions.isPending ? (
-              <Spinner label="Loading sessions" />
+              <SkeletonText lines={2} />
             ) : sessions.isError ? (
               <Alert tone="error">{errorMessage(sessions.error)}</Alert>
             ) : sessions.data.length === 0 ? (
-              <p className="text-sm text-stone-500">No active sessions.</p>
+              <p className="text-sm text-fg-muted">No active sessions.</p>
             ) : (
-              <ul className="divide-y divide-stone-100 text-sm">
+              <ul className="-my-3 divide-y divide-line-subtle text-sm">
                 {sessions.data.map((session) => (
-                  <li key={session.id} className="py-3">
-                    <p className="truncate font-medium text-stone-800">{session.user_agent ?? "Unknown browser"}</p>
-                    <p className="mt-0.5 text-xs text-stone-500">
-                      Signed in {formatDateTime(session.created_at)} · last active {formatDateTime(session.last_used_at)}
-                      {session.ip_address ? ` · ${session.ip_address}` : ""}
-                    </p>
+                  <li key={session.id} className="flex items-start gap-3 py-3">
+                    <Monitor aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-fg-subtle" />
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-fg">{session.user_agent ?? "Unknown browser"}</p>
+                      <p className="mt-0.5 text-xs text-fg-muted">
+                        Signed in {formatDateTime(session.created_at)} · last active {formatDateTime(session.last_used_at)}
+                        {session.ip_address ? ` · ${session.ip_address}` : ""}
+                      </p>
+                    </div>
                   </li>
                 ))}
               </ul>
             )}
-          </Section>
+          </Card>
 
           <UserAccessSection userId={user.id} />
         </div>
 
-        <div className="space-y-6">
-          <Section title="Account">
+        <div className="min-w-0 space-y-section">
+          <Card title="Account">
             <div className="text-sm">
               <DetailList
                 items={[
@@ -285,45 +233,57 @@ export function UserDetailPage() {
                 ]}
               />
             </div>
-          </Section>
+          </Card>
 
           {canManage && (
-            <Section title="Security actions">
+            <Card title="Security actions">
               <div className="flex flex-col gap-2">
                 {user.is_active ? (
                   !protectedAccount && (
-                    <Button variant="secondary" onClick={() => setPending("deactivate")}>
+                    <Button variant="secondary" className="justify-start" onClick={() => setPending("deactivate")}>
                       <Power aria-hidden="true" className="h-4 w-4" /> Deactivate account
                     </Button>
                   )
                 ) : (
-                  <Button variant="secondary" onClick={() => setPending("activate")}>
+                  <Button variant="secondary" className="justify-start" onClick={() => setPending("activate")}>
                     <Power aria-hidden="true" className="h-4 w-4" /> Activate account
                   </Button>
                 )}
                 {user.is_active && user.is_locked && (
-                  <Button variant="secondary" onClick={() => setPending("activate")}>
+                  <Button variant="secondary" className="justify-start" onClick={() => setPending("activate")}>
                     <Power aria-hidden="true" className="h-4 w-4" /> Clear lockout
                   </Button>
                 )}
-                <Button variant="secondary" onClick={() => setPending("revoke")}>
+                <Button variant="secondary" className="justify-start" onClick={() => setPending("revoke")}>
                   <LogOut aria-hidden="true" className="h-4 w-4" /> Sign out all sessions
                 </Button>
                 {user.is_active && (
-                  <Button variant="secondary" onClick={() => setPending("reset")}>
+                  <Button variant="secondary" className="justify-start" onClick={() => setPending("reset")}>
                     <KeyRound aria-hidden="true" className="h-4 w-4" /> Create password reset link
                   </Button>
                 )}
                 {!protectedAccount && (
-                  <Button variant="ghost" className="text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => setPending("delete")}>
+                  <Button variant="danger-ghost" className="justify-start" onClick={() => setPending("delete")}>
                     <Trash2 aria-hidden="true" className="h-4 w-4" /> Delete user
                   </Button>
                 )}
               </div>
-            </Section>
+            </Card>
           )}
         </div>
       </div>
+
+      {canManage && (
+        <EditUserDialog
+          user={user}
+          open={editing}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            toast.notify({ title: "Changes saved." });
+          }}
+        />
+      )}
 
       {dialog && pending && (
         <ConfirmDialog
