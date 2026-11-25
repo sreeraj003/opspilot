@@ -11,11 +11,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
+from app.api.routes.auth import CSRF_HEADER
 from app.core.config import APP_DESCRIPTION, Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
+from app.core.rate_limit import InMemoryRateLimiter
+from app.core.security import AccessTokenService
 from app.database.session import Database
+from app.services.auth_service import NoDeliveryNotifier
+from app.services.password_service import PasswordService
 
 logger = logging.getLogger(__name__)
 
@@ -55,15 +60,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.dependency_overrides[get_settings] = lambda: settings
 
+    # Authentication components: one instance per application (see app.api.deps).
+    app.state.access_token_service = AccessTokenService.from_settings(settings)
+    app.state.password_service = PasswordService()
+    app.state.rate_limiter = InMemoryRateLimiter()
+    app.state.password_reset_notifier = NoDeliveryNotifier()
+
     # Middleware added last runs first: the request context wraps CORS so every
     # response, including preflights and errors, carries a request ID.
+    # Credentials are allowed (the refresh-token cookie) for the explicit
+    # origins only; Settings rejects "*".
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", REQUEST_ID_HEADER],
-        expose_headers=[REQUEST_ID_HEADER],
+        allow_headers=["Authorization", "Content-Type", REQUEST_ID_HEADER, CSRF_HEADER],
+        expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
     )
     app.add_middleware(RequestContextMiddleware)
 

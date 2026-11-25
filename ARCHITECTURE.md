@@ -1,7 +1,8 @@
 # OpsPilot AI architecture
 
 This document describes how OpsPilot AI is deployed and how its parts fit together. Sections marked
-**planned** describe later modules; Modules 01 (foundation) and 02 (application database layer) are implemented.
+**planned** describe later modules; Modules 01 (foundation), 02 (application database layer) and 03 (authentication
+and user management) are implemented.
 
 ## 1. Independent installation model
 
@@ -34,16 +35,17 @@ The two communicate only over HTTP/JSON. The frontend's base URL comes from `VIT
 allows browser calls only from origins in `CORS_ORIGINS`. Every failed response uses one error envelope
 (`{"success": false, "error": {...}}`) and carries an `X-Request-ID` that also appears in the backend logs.
 
-The API client already supports a per-request headers provider, so the authentication module can add a bearer
-token without changing callers.
+The API client takes its bearer token and its refresh-on-401 behaviour from the authentication layer
+(`ApiClient.useAuthentication`), so feature code never handles tokens (section 4.7).
 
 ## 3. Application database (Module 02)
 
 OpsPilot's PostgreSQL database stores **OpsPilot's own data**, never the company's business data. The company's
-database is reached only through its GET SQL API (section 4); OpsPilot never opens a connection to it.
+database is reached only through its GET SQL API (section 5); OpsPilot never opens a connection to it.
 
-- Implemented: `application_settings` (non-secret installation settings).
-- **Planned:** users and roles, permissions, registered schema metadata, external API configuration,
+- Implemented: `application_settings` (non-secret installation settings); `users`, `user_sessions`,
+  `retired_refresh_tokens`, `password_reset_tokens`, `auth_events` (Module 03, section 4).
+- **Planned:** roles, permissions, registered schema metadata, external API configuration,
   conversations and answers, and audit records of every generated and executed query.
 
 ### 3.1 Layers
@@ -211,7 +213,178 @@ contains a URL, host, user name, password or driver message.
 - A test-only model with every mixin (including soft delete) lives on its own metadata, so it never enters the
   application schema.
 
-## 4. External GET SQL API integration (planned)
+## 4. Authentication and user management (Module 03)
+
+### 4.1 Overview
+
+```
+Browser (React)                                   Backend (FastAPI)                         PostgreSQL
+ access token: JS memory only ── Authorization: Bearer ──> get_current_principal ──> user_sessions ⋈ users
+ refresh token: HttpOnly cookie ── /api/v1/auth/refresh ──> AuthService.refresh ───> rotate digest, retire old
+```
+
+| Piece | Where |
+| --- | --- |
+| Settings (lifetimes, cookie, lockout, rate limits) | `app/core/config.py` |
+| Token primitives (JWT, opaque tokens, digests) | `app/core/security.py` |
+| Password hashing and policy | `app/services/password_service.py` |
+| Login, refresh, logout, password change and reset | `app/services/auth_service.py` |
+| User administration rules | `app/services/user_service.py` |
+| Authorization (permissions, policy) | `app/core/authorization.py`, `require_permission` in `app/api/deps.py` |
+| Rate limiting | `app/core/rate_limit.py` |
+| Audit events | `app/services/audit_service.py`, `auth_events` table |
+| First administrator | `app/services/bootstrap_service.py`, `python -m app.cli` |
+
+There is one user database per installation: no tenant column, no organisation table.
+
+### 4.2 Data model
+
+| Table | Purpose | Key points |
+| --- | --- | --- |
+| `users` | Accounts | UUID PK; `email` stored normalised (trimmed, IDNA domain, lower case; `CHECK email = lower(email)`) and unique among non-deleted rows (partial unique index `ix_users_email_live`); optional `username`, unique case-insensitively among non-deleted rows; `password_hash` (Argon2id, never returned); `is_active`, `is_verified`, `is_superuser`; `failed_login_attempts`, `locked_until`; `last_login_at`, `password_changed_at`; `created_at`/`updated_at`/`deleted_at` (soft delete). |
+| `user_sessions` | One row per signed-in browser (a refresh-token *family*) | `refresh_token_hash` (SHA-256 hex of the current token, unique); `expires_at` (idle expiry, moves on rotation) and `absolute_expires_at`; `revoked_at` + `revoked_reason`; `last_used_at`, `rotated_at`; optional `user_agent`, `ip_address`. FK to `users` `ON DELETE CASCADE`; indexes on `user_id`, `expires_at`. |
+| `retired_refresh_tokens` | Digests of tokens rotated away | PK `token_hash`, FK `session_id` (cascade). Only used to recognise reuse. |
+| `password_reset_tokens` | Single-use reset tokens | `token_hash` (unique), `expires_at`, `used_at`, `invalidated_at` (a newer token or a password change supersedes it). |
+| `auth_events` | Append-only security log | `event_type`, `user_id`, `actor_user_id` (both `SET NULL` on delete), `ip_address`, `details` (JSONB of simple values). |
+
+Migration `0002` creates them; `downgrade` drops them. Raw tokens and passwords are never stored.
+
+### 4.3 Token strategy
+
+- **Access token:** HS256 JWT signed with `SECRET_KEY`, 15 minutes by default. Claims: `sub` (user id), `sid`
+  (session id), `iss`, `aud`, `typ=access`, `iat`, `exp`, `jti`. No email, name or privilege claims: nothing in the
+  token is trusted beyond identity. Verification pins the algorithm (no `none`, no algorithm confusion), audience,
+  issuer and type.
+- **Revalidation on every request:** `get_current_principal` loads the session and user in one query and requires
+  the session to be unrevoked and unexpired and the user to be active and not deleted. Logout, revocation,
+  deactivation, deletion and password changes therefore take effect on the **next request**, not when the access
+  token expires. The cost is one indexed primary-key join per authenticated request, acceptable for a
+  single-company installation.
+- **Refresh token:** 256 random bits (`secrets.token_urlsafe(32)`), stored as SHA-256 (no salt needed: the token has
+  full entropy, so there is nothing to brute-force). Sent only as the `opspilot_refresh` cookie: `HttpOnly`,
+  `SameSite=Strict`, `Path=/api/v1/auth`, `Secure` outside development/test, `Max-Age` = session expiry.
+- **Rotation:** every `/refresh` replaces the session's digest with a new token's digest and moves the old digest to
+  `retired_refresh_tokens`, under a row lock (`SELECT … FOR UPDATE`) so concurrent refreshes serialise.
+- **Reuse detection:** a presented token that matches a *retired* digest means a copy of an old token is in use.
+  The whole session is revoked (`revoked_reason=token_reuse`) and a `refresh_token_reuse` event is recorded, so
+  both the attacker's and the victim's copies stop working. Exception: within `REFRESH_REUSE_GRACE_SECONDS` (20 s)
+  of the rotation the answer is `409 REFRESH_CONFLICT` without revocation, because two tabs of the same browser
+  refreshing at the same moment look exactly like reuse; the losing tab retries with the cookie the winner
+  received. A replay inside that window gains nothing (no tokens are returned).
+- **Lifetimes:** idle expiry 7 days (moves forward on each rotation), absolute expiry 30 days.
+- **Cleanup:** on each login, the user's expired sessions and those revoked longer than the refresh lifetime are
+  deleted (with their retired digests), so network metadata is not kept longer than useful.
+
+Trade-offs considered: server-side sessions only (opaque cookie on every request) would avoid JWTs but need a CSRF
+defence on every endpoint; pure stateless JWTs would make revocation and deactivation wait for expiry. The hybrid
+keeps API requests CSRF-free (bearer header) and revocation immediate (per-request session check).
+
+### 4.4 CSRF
+
+Only `/auth/refresh` and `/auth/logout` are authenticated by the cookie. They require the custom header
+`X-OpsPilot-CSRF: 1` (a cross-site form cannot set headers; a cross-origin script can only send it after a CORS
+preflight, which only `CORS_ORIGINS` pass) **and** reject any request whose `Origin` (or `Referer`) is not an allowed
+origin or the API's own origin. `SameSite=Strict` is a third layer. CORS allows credentials for the explicit origins
+only (`*` is refused by configuration). All other endpoints use the bearer header, which browsers never attach on
+their own, so they are not exposed to CSRF.
+
+### 4.5 Passwords
+
+- **Hashing:** Argon2id via `argon2-cffi`, RFC 9106 low-memory profile (t=3, m=64 MiB, p=4), random salt per hash.
+  Parameters live in each hash; `needs_rehash` upgrades old hashes at the next successful login. Hashing runs in a
+  worker thread so it never blocks the event loop. Input is NFKC-normalised so the same passphrase typed on
+  different systems matches.
+- **Policy (NIST SP 800-63B style):** 12–256 characters, any characters including spaces and emoji, no composition
+  rules, paste allowed; rejected if on a local list of common long passwords, made of one or two repeated
+  characters, or built from the account's email, username or name. Never truncated: over 256 characters is an
+  error. The common-password list is small and local; there is no breached-password (HIBP) lookup.
+- **Change:** requires the current password; revokes every session (including the current one), invalidates reset
+  tokens, then starts a fresh session for the calling browser.
+- **Reset:** 256-bit single-use token, stored as a digest, valid 30 minutes; issuing a new one invalidates older
+  unused ones; completion revokes every session and clears any lockout. The link carries the token in the URL
+  **fragment** (`/reset-password#token=…`), which browsers never send to servers, and the page removes it from the
+  address bar immediately. Delivery: there is no email integration. `PasswordResetNotifier` is the delivery
+  interface; the default `NoDeliveryNotifier` delivers nothing (the request is still audited), tests use a capturing
+  notifier, and administrators create links with `POST /users/{id}/password-reset`, which returns the link **once to
+  the administrator only** (`Cache-Control: no-store`) for hand-over. That admin endpoint can be switched off with
+  `PASSWORD_RESET_ADMIN_LINKS_ENABLED=false`. Self-service `/forgot-password` never returns a token.
+
+### 4.6 Login protection
+
+1. **Rate limits** (`RateLimiter` interface, in-memory sliding window): per client IP for login, forgot-password and
+   reset-password (30 per 5 minutes), per email for login and forgot-password (10 per 5 minutes; also applies to
+   unknown emails, so it reveals nothing), per IP for refresh (300 per 5 minutes), per user for password change.
+   Exceeding one returns `429` with `Retry-After`.
+2. **Account lockout:** consecutive failures are counted on the user row (under a row lock). From the 5th, the account
+   is locked for 60 s, doubling per further failure, capped at 15 minutes. Locks always expire, so an attacker can
+   delay but never permanently lock out a user; an administrator can clear a lock (Activate). Success resets the
+   counter.
+3. **No account enumeration:** unknown email, malformed email, wrong password, locked and inactive accounts all
+   return the same `401 INVALID_CREDENTIALS` "Invalid email or password." after the same Argon2 work (a dummy
+   verification for unknown accounts). The inactive check runs only after a correct password. Forgot-password
+   always returns the same `202` message.
+
+The in-memory limiter is correct for the supported deployment (one backend process, as in the Docker image). With
+several workers or replicas each keeps its own counters (effective limits multiply); a Redis-backed `RateLimiter`
+can be dropped in without touching the routes. The client IP is the direct peer: behind a reverse proxy, configure
+uvicorn `--forwarded-allow-ips`, otherwise all users share the proxy's IP budget.
+
+### 4.7 Frontend authentication lifecycle
+
+- `AuthSession` (`src/services/authSession.ts`) holds the access token and user **in memory only** and connects
+  itself to the shared `ApiClient`: it supplies the `Authorization` header and handles 401s.
+- **Start-up:** `AuthProvider` calls `/auth/refresh` once (cookie → new access token). Until it answers, protected
+  routes show "Checking your session"; on failure they redirect to `/login` (remembering the requested page).
+- **Expired access token:** an API call answers 401 → one shared refresh → the call is retried **once**. Concurrent
+  401s share a single in-flight refresh, so the token rotates once; a `409 REFRESH_CONFLICT` is retried once after a
+  short delay. A failed refresh ends the session and returns the user to `/login` with "Your session has ended".
+  There is no path that retries more than once.
+- **Sign-out:** `/auth/logout`, then the TanStack Query cache is cleared so no user data outlives the session;
+  other tabs are told through a `BroadcastChannel`. **Sign out everywhere** calls `/auth/logout-all`.
+- Route guards (`RequireAuth`, `RequirePermission`) and the `permissions` list from `/auth/me` only shape the UI.
+  They are not a security boundary: every endpoint enforces authentication and permissions on the server.
+- Tokens are never written to `localStorage`, `sessionStorage` or readable cookies, and never logged.
+
+### 4.8 Authorization and the Module 04 extension point
+
+Routes declare what they need: `Depends(require_permission(Permission.USERS_MANAGE))`. Nothing else checks
+`is_superuser`. The decision is made by the `AuthorizationPolicy` returned by `get_authorization_policy()`:
+
+- Module 03 ships `BootstrapAuthorizationPolicy`: an active, non-deleted user with `is_superuser` holds every
+  permission (`users:read`, `users:manage`, `settings:read`, `settings:manage`); every other user holds none of
+  them. Ordinary users can use their own account endpoints (`/auth/me`, change password, logout).
+- Module 04 provides a policy backed by dynamic roles and permissions and overrides `get_authorization_policy`.
+  Permission names and routes stay the same. `is_superuser` then means "installation owner created by bootstrap"
+  (a break-glass flag the new policy may honour), not a role definition.
+- The settings API (Module 02) now requires `settings:read` / `settings:manage`.
+
+### 4.9 Account rules
+
+- `is_superuser` can be set only by the bootstrap CLI. Write schemas use `extra="forbid"`, so a request that includes
+  `is_superuser` (or any unknown field) is rejected with 422 instead of being silently ignored.
+- An administrator cannot deactivate or delete their own account or the installation administrator.
+- Deactivation and deletion revoke all sessions in the same transaction; deletion is soft (`deleted_at`), keeping
+  history and foreign keys; the email becomes reusable.
+- Changing a user's email resets `is_verified`.
+
+### 4.10 Administrator bootstrap
+
+`python -m app.cli create-admin` (interactive with hidden password prompts, or `--no-input` with `OPSPILOT_ADMIN_*`
+environment variables). It takes a PostgreSQL advisory lock, refuses if any superuser row has ever existed, validates
+the password policy, and records `admin_bootstrapped`. There is no HTTP route that creates administrators.
+`python -m app.cli reset-password` is the host-level recovery path. Shell access to the server is the trust boundary.
+
+### 4.11 Audit events
+
+`AuditService.record` writes an `auth_events` row in the caller's transaction (so an event exists exactly when the
+action was committed) and a structured log line. Recorded: `login_succeeded`, `login_failed` (with reason),
+`logout`, `logout_all`, `password_changed`, `password_reset_requested`, `password_reset_completed`,
+`account_created`, `account_updated`, `account_activated`, `account_deactivated`, `account_deleted`,
+`sessions_revoked`, `refresh_token_reuse`, `admin_bootstrapped`. `details` accepts only simple values and refuses
+secret-looking keys; attempted email addresses of unknown accounts are not stored. There is no API to read events
+yet (Module 16).
+
+## 5. External GET SQL API integration (planned)
 
 OpsPilot does not connect to the company's business database. The company already has a backend endpoint that
 accepts SQL as a query parameter and returns results:
@@ -229,7 +402,7 @@ OpsPilot will:
 
 The company keeps full control: its API decides which database user runs the query and can add its own limits.
 
-## 5. Planned modular backend architecture
+## 6. Planned modular backend architecture
 
 The backend is a modular monolith. Each business module adds its own routes, schemas, services and models in
 the existing layers:
@@ -242,14 +415,15 @@ app/
   models/       SQLAlchemy models
   schemas/      Pydantic request/response contracts
   database/     Base, engine and sessions, transactions, health check
-  core/         configuration, logging, exceptions, middleware
+  core/         configuration, logging, exceptions, middleware, security primitives, authorization
+  cli/          host-level administration commands
 ```
 
 Planned modules (subject to the project owner's sequencing):
 
 | Module | Adds |
 | --- | --- |
-| Authentication and users | Login, sessions or tokens, user management |
+| Authentication and users | **Implemented (Module 03, section 4)** |
 | Roles and permissions | Which users may query which registered tables and columns |
 | Schema registry | Registering the company's table and column metadata used for SQL generation |
 | External API integration | Configured client for the company's GET SQL endpoint |
@@ -261,7 +435,7 @@ Planned modules (subject to the project owner's sequencing):
 Rules for every module: route handlers stay thin, logic lives in services, persistence lives in repositories,
 dependencies are injected through `app/api/deps.py`, and no module imports another module's routes.
 
-## 6. Planned SQL security execution pipeline
+## 7. Planned SQL security execution pipeline
 
 Generated SQL is untrusted input. Before anything reaches the company API it passes a pipeline that is
 independent of the LLM and cannot be skipped:

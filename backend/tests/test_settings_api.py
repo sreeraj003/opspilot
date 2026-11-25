@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db_session
 from app.main import create_app
 from app.repositories.application_setting_repository import ApplicationSettingRepository
-from tests.conftest import UNREACHABLE_DATABASE_URL, make_settings
+from tests.conftest import UNREACHABLE_DATABASE_URL, act_as_installation_admin, make_settings
 
 URL = "/api/v1/settings"
 LEAKS = ("not-a-real-password", "opspilot:", "127.0.0.1", "postgresql+psycopg", "psycopg", "Traceback")
@@ -29,8 +29,15 @@ def _assert_error(response_json: dict, code: str) -> None:
 # --- without a database ---------------------------------------------------------------
 
 
-def test_settings_return_503_when_database_not_configured(client: TestClient) -> None:
-    response = client.get(URL)
+def test_settings_require_authentication(client: TestClient) -> None:
+    for method, path in (("GET", URL), ("GET", f"{URL}/ui.theme"), ("PUT", f"{URL}/ui.theme"), ("DELETE", f"{URL}/ui.theme")):
+        response = client.request(method, path, json={"value": 1} if method == "PUT" else None)
+        assert response.status_code == 401, (method, path)
+        _assert_error(response.json(), "UNAUTHORIZED")
+
+
+def test_settings_return_503_when_database_not_configured(admin_client_factory: Callable[..., TestClient]) -> None:
+    response = admin_client_factory().get(URL)
 
     assert response.status_code == 503
     _assert_error(response.json(), "SERVICE_UNAVAILABLE")
@@ -46,9 +53,9 @@ def test_settings_return_503_when_database_not_configured(client: TestClient) ->
     ],
 )
 def test_settings_return_503_without_leaking_details_when_database_is_down(
-    client_factory: Callable[..., TestClient], method: str, path: str, body: dict | None
+    admin_client_factory: Callable[..., TestClient], method: str, path: str, body: dict | None
 ) -> None:
-    client = client_factory(
+    client = admin_client_factory(
         database_url=UNREACHABLE_DATABASE_URL, database_connect_timeout_seconds=1, raise_server_exceptions=False
     )
 
@@ -75,10 +82,10 @@ def test_settings_return_503_without_leaking_details_when_database_is_down(
     ],
 )
 def test_invalid_input_is_rejected_before_touching_the_database(
-    client_factory: Callable[..., TestClient], path: str, body: dict
+    admin_client_factory: Callable[..., TestClient], path: str, body: dict
 ) -> None:
     # An unreachable database proves validation happens first (no 503).
-    client = client_factory(database_url=UNREACHABLE_DATABASE_URL, database_connect_timeout_seconds=1)
+    client = admin_client_factory(database_url=UNREACHABLE_DATABASE_URL, database_connect_timeout_seconds=1)
 
     response = client.put(path, json=body)
 
@@ -88,8 +95,8 @@ def test_invalid_input_is_rejected_before_touching_the_database(
 
 
 @pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1", "limit=abc"])
-def test_invalid_pagination_is_rejected(client_factory: Callable[..., TestClient], query: str) -> None:
-    client = client_factory(database_url=UNREACHABLE_DATABASE_URL, database_connect_timeout_seconds=1)
+def test_invalid_pagination_is_rejected(admin_client_factory: Callable[..., TestClient], query: str) -> None:
+    client = admin_client_factory(database_url=UNREACHABLE_DATABASE_URL, database_connect_timeout_seconds=1)
 
     response = client.get(f"{URL}?{query}")
 
@@ -107,8 +114,8 @@ def test_settings_endpoints_are_documented(client: TestClient) -> None:
 
 
 @pytest.fixture
-def db_client(client_factory: Callable[..., TestClient], migrated_database: str) -> Iterator[TestClient]:
-    client = client_factory(database_url=migrated_database)
+def db_client(admin_client_factory: Callable[..., TestClient], migrated_database: str) -> Iterator[TestClient]:
+    client = admin_client_factory(database_url=migrated_database)
     yield client
     _truncate(client)
 
@@ -209,7 +216,7 @@ def test_secret_like_data_is_never_serialized(db_client: TestClient) -> None:
 
 @pytest.mark.postgres
 def test_each_request_gets_its_own_session(migrated_database: str, client_factory: Callable[..., TestClient]) -> None:
-    app = create_app(make_settings(database_url=migrated_database))
+    app = act_as_installation_admin(create_app(make_settings(database_url=migrated_database)))
     seen: list[AsyncSession] = []
 
     async def recording_session() -> AsyncIterator[AsyncSession]:

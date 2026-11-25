@@ -112,4 +112,32 @@ describe("ApiClient", () => {
     const init = fetchImpl.mock.calls[0]![1]!;
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-token");
   });
+
+  it("sends cookies only when asked to", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse({}));
+
+    await client(fetchImpl).get("/x");
+    await client(fetchImpl).post("/auth/refresh", undefined, { withCredentials: true });
+
+    expect(fetchImpl.mock.calls[0]![1]!.credentials).toBe("same-origin");
+    expect(fetchImpl.mock.calls[1]![1]!.credentials).toBe("include");
+  });
+
+  it("retries a 401 once after the unauthorized handler succeeds, and never for anonymous calls", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () =>
+      jsonResponse({ success: false, error: { code: "UNAUTHORIZED", message: "No." } }, 401),
+    );
+    const api = client(fetchImpl);
+    const handler = vi.fn().mockResolvedValue(true);
+    api.useAuthentication(() => ({ Authorization: "Bearer t" }), handler);
+
+    await expect(api.get("/x")).rejects.toMatchObject({ status: 401 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    await expect(api.post("/auth/login", {}, { anonymous: true })).rejects.toMatchObject({ status: 401 });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect((fetchImpl.mock.calls[2]![1]!.headers as Record<string, string>).Authorization).toBeUndefined();
+  });
 });

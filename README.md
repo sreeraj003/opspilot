@@ -8,7 +8,8 @@ language based on the real results.
 Each company installs and runs its **own independent copy** of OpsPilot AI. It is not a multi-tenant SaaS
 product, and it never connects directly to the company's business database.
 
-> **Status:** Module 01 (project foundation) and Module 02 (application database layer) are implemented. Authentication, schema registration, the external
+> **Status:** Module 01 (project foundation), Module 02 (application database layer) and Module 03
+> (authentication and user management) are implemented. Roles and permissions, schema registration, the external
 > API integration, the LLM, SQL generation, the SQL security guard and the chat interface arrive in later
 > modules. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
@@ -31,8 +32,8 @@ Details are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 | Area | Technologies |
 | --- | --- |
-| Backend | Python 3.12+, FastAPI, Pydantic v2 + pydantic-settings, SQLAlchemy 2.x, Alembic, psycopg 3, Uvicorn, HTTPX (tests) |
-| Frontend | React 19, TypeScript (strict), Vite, Tailwind CSS 4, React Router, TanStack Query, Lucide icons |
+| Backend | Python 3.12+, FastAPI, Pydantic v2 + pydantic-settings, SQLAlchemy 2.x, Alembic, psycopg 3, Uvicorn, argon2-cffi (Argon2id), PyJWT, email-validator, HTTPX (tests) |
+| Frontend | React 19, TypeScript (strict), Vite, Tailwind CSS 4, React Router, TanStack Query, React Hook Form + Zod, Lucide icons |
 | Tests | Pytest + HTTPX (backend), Vitest + React Testing Library (frontend) |
 | Infrastructure | Docker, Docker Compose, PostgreSQL 16, nginx (serves the built frontend) |
 
@@ -57,7 +58,7 @@ Then edit `.env`:
 
 - `POSTGRES_PASSWORD`: required for Docker Compose. Use URL-safe characters (it is embedded in a URL).
 - `DATABASE_URL`: only for running the backend outside Docker.
-- `SECRET_KEY`: required (32+ characters) when `APP_ENV=production`.
+- `SECRET_KEY`: signs access tokens. Required (32+ characters) when `APP_ENV=production`, recommended everywhere.
 - `NVIDIA_*`: optional until the LLM module.
 
 | Variable | Default | Purpose |
@@ -74,7 +75,21 @@ Then edit `.env`:
 | `TEST_DATABASE_URL` | empty | **Tests only.** A separate, disposable database for `pytest` (see [Database tests](#database-tests)). Never your real database |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins allowed to call the API. `*` is rejected |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` |
-| `SECRET_KEY` | empty | Application secret, 32+ characters. Required in production |
+| `SECRET_KEY` | empty | Signs access tokens, 32+ characters. Required in production; without it (development only) a temporary key is generated per start |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access-token lifetime (1–60) |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | A session ends after this many days without use (1–30) |
+| `SESSION_ABSOLUTE_MAX_DAYS` | `30` | A session ends after this many days in any case |
+| `AUTH_COOKIE_SECURE` | empty | Empty: `Secure` cookies except in `development`/`test`. `false` is refused in production |
+| `AUTH_COOKIE_SAMESITE` / `AUTH_COOKIE_DOMAIN` | `strict` / empty | Refresh-cookie attributes (see [Authentication](#authentication)) |
+| `AUTH_RECORD_CLIENT_METADATA` | `true` | Store IP address and browser on sessions (shown to administrators) |
+| `FRONTEND_BASE_URL` | first `CORS_ORIGINS` entry | Base of password-reset links |
+| `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES` | `30` | Reset-link lifetime |
+| `PASSWORD_RESET_ADMIN_LINKS_ENABLED` | `true` | Let administrators create one-time reset links |
+| `LOGIN_MAX_FAILED_ATTEMPTS` | `5` | Consecutive failures before a temporary lock |
+| `LOGIN_LOCKOUT_BASE_SECONDS` / `LOGIN_LOCKOUT_MAX_SECONDS` | `60` / `900` | First lock duration (doubles per further failure) and its cap |
+| `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `300` | Window for the limits below |
+| `AUTH_RATE_LIMIT_PER_IP` / `AUTH_RATE_LIMIT_PER_ACCOUNT` | `30` / `10` | Login, forgot-password and reset attempts per window, per client IP and per email |
+| `AUTH_REFRESH_RATE_LIMIT_PER_IP` | `300` | Token refreshes per window per client IP |
 | `NVIDIA_API_KEY` / `NVIDIA_MODEL` | empty | LLM provider credentials (optional for now) |
 | `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | LLM provider endpoint (must be https) |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `opspilot` / — / `opspilot` | Docker Compose database credentials |
@@ -100,6 +115,84 @@ docker compose up --build
 The backend waits for a healthy database, applies Alembic migrations, then starts. The frontend waits for a
 healthy backend. Database files live in the `postgres_data` volume, so they survive `docker compose down`
 (`docker compose down -v` deletes them).
+
+On a new installation, create the first administrator next (below); nobody can sign in before that.
+
+## First administrator
+
+OpsPilot ships **no default account and no default password**, and there is no web page or API endpoint that
+creates an administrator. The installation's first administrator is created once, from the server, with a command
+that runs inside the backend container. It works the same in PowerShell, Command Prompt and bash.
+
+With the stack running (`docker compose up -d`):
+
+```bash
+docker compose exec backend python -m app.cli create-admin
+```
+
+It asks for the administrator's email, full name and password (typed twice, hidden). The password must have at
+least 12 characters; long passphrases are encouraged. Then open <http://localhost:5173> and sign in with that email
+and password.
+
+- It runs **once**. When an administrator already exists it refuses and changes nothing.
+- Credentials are never printed or logged, and are never accepted as command-line arguments.
+- Non-interactive alternative (automation): pass the values as environment variables of that one command:
+
+  ```powershell
+  docker compose exec -e OPSPILOT_ADMIN_EMAIL=owner@company.com -e OPSPILOT_ADMIN_FULL_NAME="Jane Owner" `
+    -e OPSPILOT_ADMIN_PASSWORD="<a long passphrase>" backend python -m app.cli create-admin --no-input
+  ```
+
+  (bash: replace the backtick with `\`). Values given this way can end up in shell history; prefer the prompt.
+- Without Docker: from `backend/` with `DATABASE_URL` set and migrations applied, run `python -m app.cli create-admin`.
+
+**Lost administrator password?** Anyone with shell access to the server can set a new one; this also signs out every
+session of that account:
+
+```bash
+docker compose exec backend python -m app.cli reset-password --email owner@company.com
+```
+
+## Authentication
+
+Every page and every API endpoint except sign-in, password reset and the health checks requires a signed-in user.
+
+- **Sign in** at `/login` with email and password. A session lasts 7 days without use (30 days at most, then sign
+  in again). **Sign out** ends the session in this browser; **Account → Sign out everywhere** ends all of them.
+- **Change your password** under **Account**. It requires the current password and signs out every other session.
+- **Forgot password:** `/forgot-password` always answers the same way, whether or not the account exists. OpsPilot
+  does **not send email yet**, so a self-service request only records an audit event; the user should ask an
+  administrator for a reset link (below).
+- **Tokens:** a 15-minute access token (kept only in the page's memory) and a refresh token in an `HttpOnly`
+  cookie, rotated on every use. Nothing is stored in `localStorage`.
+- **Cookies and HTTPS:** production must be served over **HTTPS**; the refresh cookie is then `Secure` and the
+  backend refuses `AUTH_COOKIE_SECURE=false` when `APP_ENV=production`. On plain `http://localhost` (the default
+  Docker setup, `APP_ENV=development`) the cookie is not marked `Secure` so it works without certificates. The
+  browser app and the API must be on the **same site** (for example `localhost:5173` and `localhost:8000`, or
+  `bi.company.com` and `api.bi.company.com`) because the cookie is `SameSite=Strict`, and the app's origin must be
+  in `CORS_ORIGINS`.
+- **Brute-force protection:** after 5 consecutive wrong passwords an account is locked for 1 minute, doubling per
+  further failure up to 15 minutes; locks expire on their own. Sign-in attempts are also rate-limited per IP address
+  and per email (HTTP 429). Error messages never reveal whether an account exists.
+
+Design and trade-offs: [ARCHITECTURE.md §4](ARCHITECTURE.md#4-authentication-and-user-management-module-03).
+
+## User management
+
+Administrators see **Users** in the top navigation:
+
+- **List and search** users by name, email or username; filter by status (active, inactive, locked); sort; page
+  through results.
+- **Create user:** full name, email, optional username and an **initial password** that you choose and share with
+  the person over a trusted channel (there is no email invitation yet). They can change it under **Account**.
+- **User page:** edit name, email and username; see last sign-in and active sessions; and, each after a
+  confirmation: **Deactivate** (signs the user out everywhere at once and blocks sign-in; history is kept),
+  **Activate** (also clears a temporary lockout), **Sign out all sessions**, **Create password reset link**
+  (a one-time link, valid 30 minutes, shown once: copy it to the user; their sessions end when they set the new
+  password) and **Delete** (soft delete: the account disappears from the list and cannot sign in; audit history is
+  kept and the email can be reused).
+- The installation administrator account cannot be deactivated or deleted from the web app, and nobody can grant
+  administrator rights through it. Dynamic roles and permissions arrive in Module 04.
 
 ## Application database
 
@@ -269,7 +362,9 @@ Every failed request returns the same envelope and an `X-Request-ID` header:
 }
 ```
 
-Unexpected exceptions return `500 INTERNAL_SERVER_ERROR` with a generic message; the traceback goes to the logs
+Authentication failures are `401 UNAUTHORIZED` (or `INVALID_CREDENTIALS` for a failed sign-in) with a
+`WWW-Authenticate: Bearer` header, missing permissions are `403 FORBIDDEN`, and rate limits are
+`429 TOO_MANY_REQUESTS` with `Retry-After`. Unexpected exceptions return `500 INTERNAL_SERVER_ERROR` with a generic message; the traceback goes to the logs
 only. Logs are JSON lines with `timestamp`, `level`, `module`, `message` and `request_id`. Fields that look like
 secrets (`password`, `token`, `api_key`, `authorization`, `database_url`, …) are redacted.
 
@@ -278,23 +373,27 @@ secrets (`password`, `token`, `api_key`, `authorization`, `database_url`, …) a
 ```
 backend/
   app/
-    api/            deps.py (dependency providers), router.py, routes/ (thin HTTP handlers)
-    core/           config.py, logging.py, exceptions.py, middleware.py (request correlation)
+    api/            deps.py (dependency providers, auth + permission dependencies), router.py, presenters.py,
+                    routes/ (thin HTTP handlers: system, health, auth, users, settings)
+    cli/            python -m app.cli (create-admin, reset-password)
+    core/           config.py, logging.py, exceptions.py, middleware.py, security.py (tokens),
+                    authorization.py (permissions, policy), rate_limit.py, emails.py
     database/       base.py (Base), naming.py, session.py (engine, sessions), transaction.py, health.py
-    models/         SQLAlchemy models (base_model.py mixins, application_setting.py)
-    repositories/   Data access (base_repository.py, application_setting_repository.py)
+    models/         SQLAlchemy models (mixins, application_setting, user, user_session, password_reset_token, auth_event)
+    repositories/   Data access (base, application settings, users, sessions, reset tokens)
     schemas/        Pydantic request/response contracts
-    services/       Business logic and transaction boundaries (health, application settings)
+    services/       Business logic and transaction boundaries (health, settings, auth, users, passwords, audit, bootstrap)
     main.py         Application factory and ASGI app
-  migrations/       Alembic environment and versions/ (0001: application_settings)
-  tests/            API and config tests; tests/database/ for the database layer
+  migrations/       Alembic environment and versions/ (0001: application_settings, 0002: authentication tables)
+  tests/            API and config tests; tests/database/ database layer; tests/auth/ authentication and users
 frontend/
   src/
     app/            App, providers, routes, query client
-    components/     Reusable UI (status cards, badges, error boundary)
-    layouts/        AppShell
-    pages/          HomePage, NotFoundPage
-    services/       API client, environment config, typed endpoint calls
+    components/     Reusable UI (status cards, badges, error boundary, ui/ form fields, buttons, dialogs)
+    features/       auth/ (AuthProvider, route guards, validation), users/ (queries, create dialog)
+    layouts/        AppShell (navigation, account menu)
+    pages/          Home, Login, ForgotPassword, ResetPassword, Account, Users, UserDetail, NotFound
+    services/       API client, auth session (in-memory token, refresh), typed auth/user/system calls
     hooks/          API client injection, status queries, document title
     types/          API contract types
     utils/, styles/
@@ -311,6 +410,11 @@ docker-compose.yml, docker-compose.dev.yml, docker-compose.test.yml, .env.exampl
 | `/health/database` returns `unavailable` | PostgreSQL is not running or not reachable. Check `docker compose ps` and the password in `DATABASE_URL`. |
 | Changed `POSTGRES_PASSWORD` and the backend can no longer log in | PostgreSQL keeps the password from the first start. Change it inside the database, or run `docker compose down -v` to recreate it (deletes data). |
 | Settings endpoints return `500` and the log shows `sqlstate 42P01` | Migrations were not applied: run `alembic upgrade head`. |
+| Nobody can sign in on a new installation | Create the first administrator: `docker compose exec backend python -m app.cli create-admin`. |
+| Signed out after every page reload | The refresh cookie is not stored: the app and API must be on the same site, the app's origin must be in `CORS_ORIGINS`, and over plain `http://` (other than localhost) `AUTH_COOKIE_SECURE` must not be forced to `true`. Production needs HTTPS. |
+| Sign-in answers "Too many attempts" | Rate limit reached; wait a few minutes. Behind a reverse proxy, run uvicorn with `--forwarded-allow-ips` so users are not counted as one IP. |
+| An account stays locked | Locks expire on their own (15 minutes at most); an administrator can clear one with **Activate** on the user's page. |
+| Administrator password lost | `docker compose exec backend python -m app.cli reset-password --email <admin email>`. |
 | `Psycopg cannot use the 'ProactorEventLoop'` (Windows, no Docker) | Start uvicorn with `--reload`, or add `--loop asyncio:SelectorEventLoop`. |
 | `pytest` exits with `TEST_DATABASE_URL must ...` | Point `TEST_DATABASE_URL` at a separate database whose name contains `test` (see Database tests). |
 | Frontend shows **Unreachable** | The backend is down, `VITE_API_BASE_URL` is wrong, or the page origin is missing from `CORS_ORIGINS`. |

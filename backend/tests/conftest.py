@@ -26,8 +26,11 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
+from app.api.deps import get_current_principal
 from app.core.config import Settings
 from app.main import create_app
+from app.models.user import User
+from app.services.auth_service import Principal
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
@@ -117,6 +120,37 @@ def client_factory() -> Iterator[Callable[..., TestClient]]:
     yield factory
     for client in clients:
         client.__exit__(None, None, None)
+
+
+def act_as_installation_admin(app: FastAPI) -> FastAPI:
+    """Bypass authentication for tests of endpoints whose subject is not authentication itself.
+
+    Only ``get_current_principal`` is replaced: the authorization policy still
+    runs for real against this (unsaved) administrator account.
+    """
+    import uuid
+
+    admin = User(
+        id=uuid.uuid4(), email="admin@example.com", full_name="Test Admin", password_hash="x",
+        is_active=True, is_superuser=True,
+    )
+
+    async def principal() -> Principal:
+        return Principal(user=admin, session_id=uuid.uuid4())
+
+    app.dependency_overrides[get_current_principal] = principal
+    return app
+
+
+@pytest.fixture
+def admin_client_factory(client_factory: Callable[..., TestClient]) -> Callable[..., TestClient]:
+    """Like ``client_factory``, but requests are made as the installation administrator."""
+
+    def factory(*, raise_server_exceptions: bool = True, **overrides: Any) -> TestClient:
+        app = act_as_installation_admin(create_app(make_settings(**overrides)))
+        return client_factory(app, raise_server_exceptions=raise_server_exceptions)
+
+    return factory
 
 
 @pytest.fixture
