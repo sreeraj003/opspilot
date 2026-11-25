@@ -18,6 +18,13 @@ def test_all_application_models_share_one_metadata() -> None:
         "retired_refresh_tokens",
         "password_reset_tokens",
         "auth_events",
+        "roles",
+        "permissions",
+        "role_permissions",
+        "user_roles",
+        "user_permissions",
+        "rbac_audit_events",
+        "authorization_state",
     }
 
 

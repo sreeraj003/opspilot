@@ -108,6 +108,14 @@ class Settings(BaseSettings):
     auth_rate_limit_per_account: int = Field(default=10, ge=1, le=100000)
     auth_refresh_rate_limit_per_ip: int = Field(default=300, ge=1, le=100000)
 
+    # Permission engine (Module 04).
+    # Deepest nesting of AND/OR groups allowed in a permission's row filters.
+    authorization_policy_max_depth: int = Field(default=4, ge=1, le=8)
+    # Most row-filter conditions one permission policy may contain.
+    authorization_policy_max_conditions: int = Field(default=50, ge=1, le=500)
+    # Users whose resolved grants are cached per process (bounded LRU).
+    authorization_cache_size: int = Field(default=1024, ge=0, le=100000)
+
     # AI provider settings. Optional until the LLM module is implemented.
     nvidia_api_key: SecretStr | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"

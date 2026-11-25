@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from sqlalchemy import text
 
+from app.authorization.system_catalog import ensure_system_rbac
 from app.main import create_app
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
@@ -31,7 +32,10 @@ SECRET_KEY = "test-signing-key-" + "x" * 32
 PASSWORD = "correct horse battery staple"
 ADMIN_EMAIL = "admin@example.com"
 CSRF = {"X-OpsPilot-CSRF": "1"}
-AUTH_TABLES = "auth_events, retired_refresh_tokens, user_sessions, password_reset_tokens, users"
+AUTH_TABLES = (
+    "auth_events, retired_refresh_tokens, user_sessions, password_reset_tokens, users, "
+    "rbac_audit_events, user_permissions, user_roles, role_permissions, roles, permissions"
+)
 
 FAST_PASSWORDS = PasswordService(PasswordHasher(time_cost=1, memory_cost=1024, parallelism=1))
 
@@ -95,6 +99,15 @@ class Api:
 
         return self.run(create)
 
+    def reseed_system_rbac(self) -> None:
+        """Restore what migration 0003 seeds (built-in permissions, Administrator role)."""
+
+        async def seed() -> None:
+            async with self.client.app.state.database.session() as session:  # type: ignore[attr-defined]
+                await ensure_system_rbac(session)
+
+        self.run(seed)
+
     def login(self, email: str, password: str = PASSWORD) -> Response:
         return self.client.post("/api/v1/auth/login", json={"email": email, "password": password})
 
@@ -146,6 +159,7 @@ def api_factory(client_factory: Callable[..., TestClient], migrated_database: st
     yield factory
     if created:
         created[0].sql(f"TRUNCATE {AUTH_TABLES} CASCADE")
+        created[0].reseed_system_rbac()
 
 
 @pytest.fixture

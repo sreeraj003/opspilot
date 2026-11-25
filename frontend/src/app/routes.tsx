@@ -8,7 +8,11 @@ import { ForgotPasswordPage } from "@/pages/ForgotPasswordPage";
 import { HomePage } from "@/pages/HomePage";
 import { LoginPage } from "@/pages/LoginPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
+import { PermissionEditorPage } from "@/pages/PermissionEditorPage";
+import { PermissionsPage } from "@/pages/PermissionsPage";
 import { ResetPasswordPage } from "@/pages/ResetPasswordPage";
+import { RoleDetailPage } from "@/pages/RoleDetailPage";
+import { RolesPage } from "@/pages/RolesPage";
 import { UserDetailPage } from "@/pages/UserDetailPage";
 import { UsersPage } from "@/pages/UsersPage";
 
@@ -44,6 +48,22 @@ export const routes: RouteObject[] = [
                 children: [
                   { index: true, element: <UsersPage /> },
                   { path: ":userId", element: <UserDetailPage /> },
+                ],
+              },
+              {
+                path: "admin/roles",
+                element: <RequirePermission permission="roles:read" />,
+                children: [
+                  { index: true, element: <RolesPage /> },
+                  { path: ":roleId", element: <RoleDetailPage /> },
+                ],
+              },
+              {
+                path: "admin/permissions",
+                element: <RequirePermission permission="permissions:read" />,
+                children: [
+                  { index: true, element: <PermissionsPage /> },
+                  { path: ":permissionId", element: <PermissionEditorPage /> },
                 ],
               },
               { path: "*", element: <NotFoundPage /> },

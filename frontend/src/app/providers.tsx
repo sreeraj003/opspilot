@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { createQueryClient } from "@/app/queryClient";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider } from "@/features/auth/AuthProvider";
+import { PermissionsProvider } from "@/features/permissions/PermissionsProvider";
 import { ApiClientContext } from "@/hooks/apiClientContext";
 import { apiClient as defaultApiClient, type ApiClient } from "@/services/apiClient";
 import type { AuthSession } from "@/services/authSession";
@@ -28,7 +29,9 @@ export function AppProviders({
     <ErrorBoundary>
       <ApiClientContext.Provider value={apiClient}>
         <QueryClientProvider client={client}>
-          <AuthProvider session={authSession}>{children}</AuthProvider>
+          <AuthProvider session={authSession}>
+            <PermissionsProvider>{children}</PermissionsProvider>
+          </AuthProvider>
         </QueryClientProvider>
       </ApiClientContext.Provider>
     </ErrorBoundary>

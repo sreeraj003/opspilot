@@ -27,6 +27,7 @@ from app.models.user import User
 from app.models.user_session import SessionRevocationReason, UserSession
 from app.repositories.base_repository import Page
 from app.repositories.password_reset_repository import PasswordResetTokenRepository
+from app.repositories.rbac_repository import AuthorizationStateRepository
 from app.repositories.session_repository import UserSessionRepository
 from app.repositories.user_repository import UserQuery, UserRepository
 from app.schemas.user import UserCreate, UserUpdate
@@ -50,6 +51,7 @@ class UserService:
         self._sessions = UserSessionRepository(session)
         self._resets = PasswordResetTokenRepository(session)
         self._audit = AuditService(session)
+        self._authorization_state = AuthorizationStateRepository(session)
 
     # --- reads --------------------------------------------------------------------------
 
@@ -128,6 +130,8 @@ class UserService:
             # Activation also clears a temporary lockout.
             user.failed_login_attempts = 0
             user.locked_until = None
+            # Permission caches must not outlive a status change (see app.authorization.cache).
+            await self._authorization_state.bump()
             await self._record(AuthEventType.ACCOUNT_ACTIVATED, user, actor, client, {"cleared_lockout": was_locked})
         return user
 
@@ -140,6 +144,8 @@ class UserService:
                 user.id, reason=SessionRevocationReason.USER_DEACTIVATED, now=utcnow()
             )
             await self._resets.invalidate_unused_for_user(user.id, utcnow())
+            # Permission caches must not outlive a status change (see app.authorization.cache).
+            await self._authorization_state.bump()
             await self._record(AuthEventType.ACCOUNT_DEACTIVATED, user, actor, client, {"revoked_sessions": revoked})
         return user
 
@@ -154,6 +160,8 @@ class UserService:
             )
             await self._resets.invalidate_unused_for_user(user.id, now)
             await self._users.delete(user)  # soft delete: history and foreign keys stay intact
+            # Permission caches must not outlive a status change (see app.authorization.cache).
+            await self._authorization_state.bump()
             await self._record(AuthEventType.ACCOUNT_DELETED, user, actor, client, {"revoked_sessions": revoked})
 
     async def revoke_sessions(self, user_id: uuid.UUID, actor: User, client: ClientInfo) -> int:

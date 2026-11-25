@@ -108,13 +108,13 @@ def _user(**values: object) -> User:
     return User(email="u@example.com", full_name="U", password_hash="x", **defaults)
 
 
-def test_bootstrap_policy() -> None:
+async def test_bootstrap_policy() -> None:
     policy = BootstrapAuthorizationPolicy()
 
-    assert policy.permissions_for(_user(is_superuser=True)) == frozenset(Permission)
-    assert policy.permissions_for(_user()) == frozenset()
-    assert policy.permissions_for(_user(is_superuser=True, is_active=False)) == frozenset()
-    assert not policy.is_allowed(_user(), Permission.USERS_MANAGE)
+    assert await policy.permissions_for(_user(is_superuser=True)) == frozenset(Permission)
+    assert await policy.permissions_for(_user()) == frozenset()
+    assert await policy.permissions_for(_user(is_superuser=True, is_active=False)) == frozenset()
+    assert not await policy.is_allowed(_user(), Permission.USERS_MANAGE)
 
 
 def test_cookie_security_defaults() -> None:

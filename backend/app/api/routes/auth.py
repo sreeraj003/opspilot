@@ -127,11 +127,11 @@ def _clear_cookie_header(settings: Settings) -> str:
     return response.headers["set-cookie"]
 
 
-def _token_response(service: AuthService, result: AuthResult) -> TokenResponse:
+async def _token_response(service: AuthService, result: AuthResult) -> TokenResponse:
     return TokenResponse(
         access_token=result.access.token,
         expires_in=result.access.expires_in,
-        user=current_user_read(result.user, service.permissions_for(result.user)),
+        user=current_user_read(result.user, await service.permissions_for(result.user)),
     )
 
 
@@ -160,7 +160,7 @@ async def login(
     limiter.reset(account_key)
     _set_refresh_cookie(response, result, settings)
     _no_store(response)
-    return _token_response(service, result)
+    return await _token_response(service, result)
 
 
 @router.post(
@@ -190,7 +190,7 @@ async def refresh(
         raise
     _set_refresh_cookie(response, result, settings)
     _no_store(response)
-    return _token_response(service, result)
+    return await _token_response(service, result)
 
 
 @router.post(
@@ -252,7 +252,7 @@ async def change_password(
     result = await service.change_password(principal, body.current_password, body.new_password, client)
     _set_refresh_cookie(response, result, settings)
     _no_store(response)
-    return _token_response(service, result)
+    return await _token_response(service, result)
 
 
 @router.post(

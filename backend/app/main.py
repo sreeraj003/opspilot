@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
+from app.authorization.cache import AuthorizationCache
 from app.api.routes.auth import CSRF_HEADER
 from app.core.config import APP_DESCRIPTION, Settings, get_settings
 from app.core.exceptions import register_exception_handlers
@@ -65,6 +66,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.password_service = PasswordService()
     app.state.rate_limiter = InMemoryRateLimiter()
     app.state.password_reset_notifier = NoDeliveryNotifier()
+    # Module 04: per-process permission cache, validated against the database revision.
+    app.state.authorization_cache = AuthorizationCache(settings.authorization_cache_size)
 
     # Middleware added last runs first: the request context wraps CORS so every
     # response, including preflights and errors, carries a request ID.

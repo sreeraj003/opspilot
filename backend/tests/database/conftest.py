@@ -13,6 +13,7 @@ from sqlalchemy import MetaData, String, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from app.authorization.system_catalog import ensure_system_rbac
 from app.database.base import TYPE_ANNOTATION_MAP, Base
 from app.database.naming import NAMING_CONVENTION
 from app.database.session import create_engine_from_settings
@@ -58,9 +59,13 @@ async def engine(migrated_database: str) -> AsyncIterator[AsyncEngine]:
 
 @pytest.fixture
 async def session_factory(engine: AsyncEngine) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    yield async_sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    factory = async_sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    yield factory
     async with engine.begin() as connection:
         await connection.execute(text("TRUNCATE " + ", ".join(_all_tables())))
+    # Restore the built-in permissions and Administrator role that migration 0003 seeds.
+    async with factory() as session:
+        await ensure_system_rbac(session)
 
 
 @pytest.fixture

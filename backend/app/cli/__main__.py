@@ -2,6 +2,7 @@
 
     python -m app.cli create-admin      # first administrator (once per installation)
     python -m app.cli reset-password    # recover access from the server's shell
+    python -m app.cli sync-permissions  # restore built-in permissions / Administrator role
 
 Credentials come from an interactive prompt (input is hidden) or, with
 ``--no-input``, from environment variables:
@@ -20,6 +21,7 @@ import logging
 import os
 import sys
 
+from app.authorization.system_catalog import ensure_system_rbac
 from app.core.config import get_settings
 from app.core.emails import InvalidEmailError, normalize_email
 from app.database.session import Database
@@ -118,6 +120,10 @@ async def _run(args: argparse.Namespace) -> int:
                 await create_initial_admin(session, passwords, credentials)
             print(f"Installation administrator created: {normalize_email(credentials.email)}")
             print("Sign in at the OpsPilot AI web app with this email and the password you chose.")
+        elif args.command == "sync-permissions":
+            async with database.session() as session:
+                changes = await ensure_system_rbac(session)
+            print(f"Built-in permissions and the Administrator role are up to date ({changes} change(s) made).")
         else:
             email = args.email or _env("OPSPILOT_ADMIN_EMAIL") or _prompt_email(None)
             password = _env("OPSPILOT_NEW_PASSWORD") if args.no_input else _prompt_password((email,))
@@ -152,6 +158,10 @@ def build_parser() -> argparse.ArgumentParser:
     reset = commands.add_parser("reset-password", help="Set a new password for an account from the server shell.")
     reset.add_argument("--email")
     reset.add_argument("--no-input", action="store_true", help="Read the password from OPSPILOT_NEW_PASSWORD.")
+
+    commands.add_parser(
+        "sync-permissions", help="Create any missing built-in permission or the Administrator role (idempotent)."
+    )
     return parser
 
 

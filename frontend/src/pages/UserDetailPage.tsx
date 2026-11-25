@@ -12,7 +12,9 @@ import { ConfirmDialog, Dialog } from "@/components/ui/Dialog";
 import { TextField } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { useAuth } from "@/features/auth/authContext";
+import { usePermissions } from "@/features/permissions/permissionsContext";
 import { emailSchema } from "@/features/auth/validation";
+import { UserAccessSection } from "@/features/rbac/UserAccessSection";
 import { usernameSchema } from "@/features/users/CreateUserDialog";
 import {
   useDeleteUser,
@@ -136,7 +138,8 @@ function ResetLinkDialog({ result, onClose }: { result: AdminPasswordResetRespon
 export function UserDetailPage() {
   const { userId = "" } = useParams();
   const navigate = useNavigate();
-  const { user: currentUser, hasPermission } = useAuth();
+  const { user: currentUser } = useAuth();
+  const { hasPermission } = usePermissions();
   const canManage = hasPermission("users:manage");
   const detail = useUserDetail(userId);
   const sessions = useUserSessions(userId);
@@ -264,6 +267,8 @@ export function UserDetailPage() {
               </ul>
             )}
           </Section>
+
+          <UserAccessSection userId={user.id} />
         </div>
 
         <div className="space-y-6">
@@ -271,7 +276,7 @@ export function UserDetailPage() {
             <div className="text-sm">
               <DetailList
                 items={[
-                  { label: "Role", value: user.is_superuser ? "Administrator" : "User" },
+                  { label: "Account type", value: user.is_superuser ? "Installation administrator" : "User" },
                   { label: "Username", value: user.username ?? "Not set" },
                   { label: "Last sign-in", value: formatDateTime(user.last_login_at) },
                   { label: "Active sessions", value: String(user.active_session_count) },

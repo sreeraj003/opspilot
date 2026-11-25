@@ -4,6 +4,7 @@ import { NavLink, Outlet } from "react-router";
 
 import { BrandMark } from "@/components/BrandMark";
 import { useAuth } from "@/features/auth/authContext";
+import { usePermissions } from "@/features/permissions/permissionsContext";
 import { cn } from "@/utils/cn";
 
 function navClass({ isActive }: { isActive: boolean }): string {
@@ -14,7 +15,13 @@ function navClass({ isActive }: { isActive: boolean }): string {
 }
 
 export function AppShell() {
-  const { user, hasPermission, logout } = useAuth();
+  const { user, logout } = useAuth();
+  const { hasPermission } = usePermissions();
+  const links = [
+    { to: "/admin/users", label: "Users", permission: "users:read" },
+    { to: "/admin/roles", label: "Roles", permission: "roles:read" },
+    { to: "/admin/permissions", label: "Permissions", permission: "permissions:read" },
+  ].filter((link) => hasPermission(link.permission));
   const [signingOut, setSigningOut] = useState(false);
 
   return (
@@ -27,11 +34,11 @@ export function AppShell() {
               <NavLink to="/" end className={navClass}>
                 Home
               </NavLink>
-              {hasPermission("users:read") && (
-                <NavLink to="/admin/users" className={navClass}>
-                  Users
+              {links.map((link) => (
+                <NavLink key={link.to} to={link.to} className={navClass}>
+                  {link.label}
                 </NavLink>
-              )}
+              ))}
             </nav>
           </div>
           {user && (
@@ -57,14 +64,16 @@ export function AppShell() {
             </div>
           )}
         </div>
-        {hasPermission("users:read") && (
-          <nav aria-label="Main (compact)" className="flex gap-1 px-4 pb-2 sm:hidden">
+        {links.length > 0 && (
+          <nav aria-label="Main (compact)" className="flex gap-1 overflow-x-auto px-4 pb-2 sm:hidden">
             <NavLink to="/" end className={navClass}>
               Home
             </NavLink>
-            <NavLink to="/admin/users" className={navClass}>
-              Users
-            </NavLink>
+            {links.map((link) => (
+              <NavLink key={link.to} to={link.to} className={navClass}>
+                {link.label}
+              </NavLink>
+            ))}
           </nav>
         )}
       </header>

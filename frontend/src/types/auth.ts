@@ -15,7 +15,20 @@ export interface User {
   updated_at: string;
 }
 
-export type Permission = "users:read" | "users:manage" | "settings:read" | "settings:manage";
+/** Built-in system permissions checked by the API's routes. Administrators create other permission keys at run time. */
+export type SystemPermission =
+  | "users:read"
+  | "users:manage"
+  | "settings:read"
+  | "settings:manage"
+  | "roles:read"
+  | "roles:manage"
+  | "permissions:read"
+  | "permissions:manage"
+  | "access:review"
+  | "access:assign";
+
+export type Permission = SystemPermission | (string & {});
 
 export interface CurrentUser extends User {
   /** For display decisions only. The server enforces every permission itself. */
