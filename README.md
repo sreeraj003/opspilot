@@ -8,7 +8,7 @@ language based on the real results.
 Each company installs and runs its **own independent copy** of OpsPilot AI. It is not a multi-tenant SaaS
 product, and it never connects directly to the company's business database.
 
-> **Status:** Module 01 (project foundation) is implemented. Authentication, schema registration, the external
+> **Status:** Module 01 (project foundation) and Module 02 (application database layer) are implemented. Authentication, schema registration, the external
 > API integration, the LLM, SQL generation, the SQL security guard and the chat interface arrive in later
 > modules. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
@@ -67,6 +67,11 @@ Then edit `.env`:
 | `APP_DEBUG` | `false` | Must be `false` in production |
 | `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | Bind address for a locally started backend |
 | `DATABASE_URL` | empty | PostgreSQL URL (`postgresql+psycopg://…`; `postgresql://` is accepted and converted). Required in production |
+| `DATABASE_POOL_SIZE` / `DATABASE_MAX_OVERFLOW` | `5` / `10` | Connections kept open / extra connections allowed under load (per backend process) |
+| `DATABASE_POOL_TIMEOUT_SECONDS` | `10` | Wait for a free connection before answering `503` |
+| `DATABASE_POOL_RECYCLE_SECONDS` | `1800` | Replace connections older than this |
+| `DATABASE_CONNECT_TIMEOUT_SECONDS` | `5` | Give up connecting after this |
+| `TEST_DATABASE_URL` | empty | **Tests only.** A separate, disposable database for `pytest` (see [Database tests](#database-tests)). Never your real database |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins allowed to call the API. `*` is rejected |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` |
 | `SECRET_KEY` | empty | Application secret, 32+ characters. Required in production |
@@ -96,6 +101,46 @@ The backend waits for a healthy database, applies Alembic migrations, then start
 healthy backend. Database files live in the `postgres_data` volume, so they survive `docker compose down`
 (`docker compose down -v` deletes them).
 
+## Application database
+
+OpsPilot's own PostgreSQL 16 database (never the company's business database). The backend uses async SQLAlchemy 2.x
+with psycopg 3; schema changes are Alembic migrations. Design details: [ARCHITECTURE.md §3](ARCHITECTURE.md#3-application-database-module-02).
+
+**Prerequisites:** a PostgreSQL 16 server and a user that owns the OpsPilot database. With Docker Compose this is
+the `db` service and nothing else is needed. Give the application a database user without superuser rights.
+
+### Running migrations
+
+Docker Compose applies them automatically: the backend container runs `alembic upgrade head` on every start (it is a
+no-op when the schema is current). For a backend started on your machine:
+
+```bash
+cd backend
+alembic upgrade head       # apply all migrations (uses DATABASE_URL from .env)
+alembic current            # show the applied revision
+alembic history            # list revisions
+alembic downgrade -1       # undo the latest migration (development only)
+```
+
+To run them inside the running Compose stack: `docker compose exec backend alembic current`.
+
+### Creating a new migration
+
+1. Add or change a model in `backend/app/models/` (new models must be imported in `app/models/__init__.py`).
+2. Generate the revision against an up-to-date development database, with the next sequential id:
+
+   ```bash
+   cd backend
+   alembic upgrade head
+   alembic revision --autogenerate --rev-id 0002 -m "create users"
+   ```
+
+3. Read and tidy the generated file in `migrations/versions/` (autogenerate is a starting point, not the final
+   word), make sure `downgrade()` reverses `upgrade()`, then run `alembic upgrade head` and the tests.
+
+Never edit a migration that has already been applied anywhere; write a new one. `alembic check` reports models that
+are out of sync with the migrations, and the test suite fails in that case too.
+
 ## Installing and running locally
 
 Start only the database from Compose, published on `127.0.0.1:5432`:
@@ -123,10 +168,27 @@ The backend reads the root `.env` (and `backend/.env`, if present, which takes p
 | --- | --- |
 | `GET /` | Application name, description, version, environment |
 | `GET /health` | Application health (`200` while the process serves requests) |
-| `GET /health/database` | Runs `SELECT 1` on the application database: `200 ok`, or `503` with `unavailable` / `not_configured` |
+| `GET /health/database` | Runs `SELECT 1` through a database session: `200 ok`, or `503` with `unavailable` / `not_configured` |
+| `GET /api/v1/settings?offset=0&limit=50` | List application settings (paginated, ordered by key, `limit` ≤ 100) |
+| `GET /api/v1/settings/{key}` | One setting, or `404` |
+| `PUT /api/v1/settings/{key}` | Create (`201`) or replace (`200`) a setting. Body: `{"value": <any JSON except null>, "description": "optional"}` |
+| `DELETE /api/v1/settings/{key}` | Delete a setting (`204`), or `404` |
 | `GET /docs`, `/redoc`, `/openapi.json` | OpenAPI documentation |
 
-Health responses never include URLs, host names or credentials.
+Health responses never include URLs, host names or credentials. Setting keys are lowercase (`a-z`, `0-9`, `.`, `_`,
+`-`, starting with a letter, up to 128 characters). Settings are for non-secret configuration only: keys or JSON
+members that look like credentials (`password`, `token`, `api_key`, ...) are rejected with `422`. When the database
+is down, these endpoints return `503 DATABASE_UNAVAILABLE`.
+
+Example:
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/settings/ui.page_size \
+     -H "Content-Type: application/json" -d '{"value": 25, "description": "Rows per page"}'
+```
+
+On **Windows without Docker**, psycopg's async mode needs the selector event loop. `uvicorn --reload` already uses
+it; for a run without `--reload`, add `--loop asyncio:SelectorEventLoop`.
 
 ### Frontend
 
@@ -150,15 +212,39 @@ cd backend
 pytest
 ```
 
-Tests that need a real PostgreSQL server are marked `postgres` and are **skipped** unless `TEST_DATABASE_URL`
-points to a disposable database:
+Without a test database, the PostgreSQL tests are **skipped** (reported as `s`); validation, configuration and
+"database unavailable" behaviour still run.
+
+#### Database tests
+
+Database tests need a **separate, disposable** PostgreSQL database: they drop and recreate its tables. Do not point
+them at your real database. `docker-compose.test.yml` starts one in memory on `127.0.0.1:55432`, with its own
+credentials, as a separate Compose project that never touches the application database:
 
 ```bash
-TEST_DATABASE_URL=postgresql://opspilot:<password>@localhost:5432/opspilot pytest
+docker compose -f docker-compose.test.yml up -d --wait
 ```
 
-Without it, the database tests still check the `not_configured` and `unavailable` behaviour, but a passing run
-does not claim connectivity.
+Then set `TEST_DATABASE_URL`, either in `.env`:
+
+```
+TEST_DATABASE_URL=postgresql+psycopg://opspilot_test:opspilot_test@localhost:55432/opspilot_test
+```
+
+or for one shell (PowerShell: `$env:TEST_DATABASE_URL="postgresql+psycopg://opspilot_test:opspilot_test@localhost:55432/opspilot_test"`;
+bash: `export TEST_DATABASE_URL=...`), and run:
+
+```bash
+cd backend
+pytest                          # everything
+pytest tests/database           # database layer only
+pytest -m postgres              # only the tests that use PostgreSQL
+```
+
+Safety: pytest stops if the test database's name does not contain `test`, or if it is the same database as
+`DATABASE_URL`. Each run rebuilds the test schema with the migrations; the migration test creates and drops its own
+scratch database (the test user needs `CREATEDB`, which the test container's user has). Stop the container with
+`docker compose -f docker-compose.test.yml down` (its data is discarded).
 
 ### Frontend
 
@@ -194,12 +280,14 @@ backend/
   app/
     api/            deps.py (dependency providers), router.py, routes/ (thin HTTP handlers)
     core/           config.py, logging.py, exceptions.py, middleware.py (request correlation)
-    database/       base.py (declarative Base), session.py (engine, sessions)
-    schemas/        Pydantic response contracts
-    services/       Logic behind the routes (health checks)
+    database/       base.py (Base), naming.py, session.py (engine, sessions), transaction.py, health.py
+    models/         SQLAlchemy models (base_model.py mixins, application_setting.py)
+    repositories/   Data access (base_repository.py, application_setting_repository.py)
+    schemas/        Pydantic request/response contracts
+    services/       Business logic and transaction boundaries (health, application settings)
     main.py         Application factory and ASGI app
-  migrations/       Alembic environment (no revisions yet: Module 01 defines no tables)
-  tests/
+  migrations/       Alembic environment and versions/ (0001: application_settings)
+  tests/            API and config tests; tests/database/ for the database layer
 frontend/
   src/
     app/            App, providers, routes, query client
@@ -210,7 +298,7 @@ frontend/
     hooks/          API client injection, status queries, document title
     types/          API contract types
     utils/, styles/
-docker-compose.yml, docker-compose.dev.yml, .env.example
+docker-compose.yml, docker-compose.dev.yml, docker-compose.test.yml, .env.example
 ```
 
 ## Troubleshooting
@@ -222,6 +310,9 @@ docker-compose.yml, docker-compose.dev.yml, .env.example
 | `/health/database` returns `not_configured` | `DATABASE_URL` is empty for a locally started backend. |
 | `/health/database` returns `unavailable` | PostgreSQL is not running or not reachable. Check `docker compose ps` and the password in `DATABASE_URL`. |
 | Changed `POSTGRES_PASSWORD` and the backend can no longer log in | PostgreSQL keeps the password from the first start. Change it inside the database, or run `docker compose down -v` to recreate it (deletes data). |
+| Settings endpoints return `500` and the log shows `sqlstate 42P01` | Migrations were not applied: run `alembic upgrade head`. |
+| `Psycopg cannot use the 'ProactorEventLoop'` (Windows, no Docker) | Start uvicorn with `--reload`, or add `--loop asyncio:SelectorEventLoop`. |
+| `pytest` exits with `TEST_DATABASE_URL must ...` | Point `TEST_DATABASE_URL` at a separate database whose name contains `test` (see Database tests). |
 | Frontend shows **Unreachable** | The backend is down, `VITE_API_BASE_URL` is wrong, or the page origin is missing from `CORS_ORIGINS`. |
 | Changed `VITE_API_BASE_URL` has no effect in Docker | It is built into the bundle: run `docker compose up --build frontend`. |
 | Port 8000, 5173 or 5432 is busy | Set `BACKEND_PORT`, `FRONTEND_PORT` or `POSTGRES_PORT` in `.env` (update `CORS_ORIGINS` to match). |

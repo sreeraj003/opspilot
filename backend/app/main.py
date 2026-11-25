@@ -35,7 +35,7 @@ def _build_lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncCont
             yield
         finally:
             if database is not None:
-                database.dispose()
+                await database.dispose()
             logger.info("Application stopped")
 
     return lifespan
