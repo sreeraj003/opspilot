@@ -33,9 +33,12 @@ class AppError(Exception):
     code: str = "INTERNAL_SERVER_ERROR"
     message: str = "An unexpected error occurred."
 
-    def __init__(self, message: str | None = None, *, details: Any | None = None) -> None:
+    def __init__(
+        self, message: str | None = None, *, details: Any | None = None, headers: dict[str, str] | None = None
+    ) -> None:
         self.message = message or self.message
         self.details = details
+        self.headers = headers
         super().__init__(self.message)
 
 
@@ -57,6 +60,34 @@ class InvalidInputError(AppError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     code = "VALIDATION_ERROR"
     message = "The request is not valid."
+
+
+class AuthenticationError(AppError):
+    """Missing, invalid or expired credentials. Messages never say which."""
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+    code = "UNAUTHORIZED"
+    message = "Authentication is required."
+
+    def __init__(self, message: str | None = None, *, code: str | None = None) -> None:
+        super().__init__(message, headers={"WWW-Authenticate": "Bearer"})
+        if code is not None:
+            self.code = code
+
+
+class PermissionDeniedError(AppError):
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "FORBIDDEN"
+    message = "You do not have permission to perform this action."
+
+
+class TooManyRequestsError(AppError):
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    code = "TOO_MANY_REQUESTS"
+    message = "Too many requests. Try again later."
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__(headers={"Retry-After": str(max(1, retry_after_seconds))})
 
 
 class ServiceUnavailableError(AppError):
@@ -98,7 +129,7 @@ async def _app_error_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AppError)
     if exc.status_code >= 500:
         logger.error("Application error", extra={"error_code": exc.code, "error_message": exc.message})
-    return error_response(exc.status_code, exc.code, exc.message, exc.details)
+    return error_response(exc.status_code, exc.code, exc.message, exc.details, headers=exc.headers)
 
 
 async def _http_exception_handler(_: Request, exc: Exception) -> JSONResponse:

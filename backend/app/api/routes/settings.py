@@ -6,9 +6,10 @@ never touch the database session directly.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Query, Response, status
+from fastapi import APIRouter, Depends, Path, Query, Response, status
 
-from app.api.deps import ApplicationSettingsServiceDep
+from app.api.deps import ApplicationSettingsServiceDep, require_permission
+from app.core.authorization import Permission
 from app.schemas.application_setting import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
@@ -19,7 +20,11 @@ from app.schemas.application_setting import (
 )
 from app.schemas.errors import ErrorResponse
 
+# Installation settings are administrative: reading and writing both require a
+# permission (the installation administrator in Module 03).
 router = APIRouter(prefix="/settings", tags=["settings"])
+CanRead = Depends(require_permission(Permission.SETTINGS_READ))
+CanManage = Depends(require_permission(Permission.SETTINGS_MANAGE))
 
 KeyPath = Annotated[
     str,
@@ -27,12 +32,16 @@ KeyPath = Annotated[
 ]
 
 _ERRORS = {
+    401: {"model": ErrorResponse, "description": "Not authenticated."},
+    403: {"model": ErrorResponse, "description": "Not permitted."},
     422: {"model": ErrorResponse, "description": "Invalid key or body."},
     503: {"model": ErrorResponse, "description": "The application database is unavailable or not configured."},
 }
 
 
-@router.get("", response_model=ApplicationSettingPage, summary="List settings", responses=_ERRORS)
+@router.get(
+    "", response_model=ApplicationSettingPage, summary="List settings", responses=_ERRORS, dependencies=[CanRead]
+)
 async def list_settings(
     service: ApplicationSettingsServiceDep,
     offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
@@ -51,6 +60,7 @@ async def list_settings(
     "/{key}",
     response_model=ApplicationSettingRead,
     summary="Get one setting",
+    dependencies=[CanRead],
     responses={404: {"model": ErrorResponse, "description": "No setting with this key."}, **_ERRORS},
 )
 async def get_setting(key: KeyPath, service: ApplicationSettingsServiceDep) -> ApplicationSettingRead:
@@ -61,6 +71,7 @@ async def get_setting(key: KeyPath, service: ApplicationSettingsServiceDep) -> A
     "/{key}",
     response_model=ApplicationSettingRead,
     summary="Create or replace a setting",
+    dependencies=[CanManage],
     description="Returns 201 when the setting was created and 200 when an existing one was replaced.",
     responses={
         201: {"model": ApplicationSettingRead, "description": "Created."},
@@ -80,6 +91,7 @@ async def put_setting(
     "/{key}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a setting",
+    dependencies=[CanManage],
     responses={404: {"model": ErrorResponse, "description": "No setting with this key."}, **_ERRORS},
 )
 async def delete_setting(key: KeyPath, service: ApplicationSettingsServiceDep) -> Response:

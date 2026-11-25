@@ -8,7 +8,7 @@ held in ``SecretStr`` so they never appear in logs, reprs or error messages.
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -70,12 +70,59 @@ class Settings(BaseSettings):
 
     secret_key: SecretStr | None = None
 
+    # --- Authentication (Module 03) ----------------------------------------------
+    # Access tokens are short-lived signed JWTs held in browser memory.
+    access_token_expire_minutes: int = Field(default=15, ge=1, le=60)
+    # Refresh tokens rotate on every use. The idle lifetime restarts on each
+    # rotation; the absolute lifetime caps a session no matter how active it is.
+    refresh_token_expire_days: int = Field(default=7, ge=1, le=30)
+    session_absolute_max_days: int = Field(default=30, ge=1, le=365)
+    # Seconds during which a just-rotated refresh token answers 409 (two tabs
+    # refreshing at once) instead of being treated as stolen-token reuse.
+    refresh_reuse_grace_seconds: int = Field(default=20, ge=0, le=120)
+    # None: Secure cookies everywhere except APP_ENV=development/test (plain
+    # http://localhost). Production refuses false.
+    auth_cookie_secure: bool | None = None
+    auth_cookie_samesite: Literal["strict", "lax"] = "strict"
+    auth_cookie_domain: str | None = None
+    # Store user agent and IP address on sessions (shown to administrators).
+    auth_record_client_metadata: bool = True
+
+    password_reset_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
+    # Lets an administrator generate a one-time reset link to hand to a user
+    # (there is no email delivery yet).
+    password_reset_admin_links_enabled: bool = True
+    # Where the browser app lives; used to build password-reset links.
+    # Defaults to the first CORS origin.
+    frontend_base_url: str | None = None
+
+    # Account throttling: after this many consecutive failures the account is
+    # temporarily locked, doubling each further failure up to the maximum.
+    login_max_failed_attempts: int = Field(default=5, ge=1, le=100)
+    login_lockout_base_seconds: int = Field(default=60, ge=1, le=3600)
+    login_lockout_max_seconds: int = Field(default=900, ge=1, le=86400)
+
+    # In-process rate limits (per backend process; see ARCHITECTURE.md).
+    auth_rate_limit_window_seconds: int = Field(default=300, ge=1, le=86400)
+    auth_rate_limit_per_ip: int = Field(default=30, ge=1, le=100000)
+    auth_rate_limit_per_account: int = Field(default=10, ge=1, le=100000)
+    auth_refresh_rate_limit_per_ip: int = Field(default=300, ge=1, le=100000)
+
     # AI provider settings. Optional until the LLM module is implemented.
     nvidia_api_key: SecretStr | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_model: str | None = None
 
-    @field_validator("database_url", "secret_key", "nvidia_api_key", "nvidia_model", mode="before")
+    @field_validator(
+        "database_url",
+        "secret_key",
+        "nvidia_api_key",
+        "nvidia_model",
+        "frontend_base_url",
+        "auth_cookie_domain",
+        "auth_cookie_secure",
+        mode="before",
+    )
     @classmethod
     def _empty_is_unset(cls, value: object) -> object:
         return _blank_to_none(value)
@@ -129,6 +176,16 @@ class Settings(BaseSettings):
             raise ValueError(f"SECRET_KEY must be at least {_MIN_SECRET_KEY_LENGTH} characters")
         return value
 
+    @field_validator("frontend_base_url")
+    @classmethod
+    def _validate_frontend_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().rstrip("/")
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("FRONTEND_BASE_URL must start with http:// or https://")
+        return value
+
     @field_validator("nvidia_base_url")
     @classmethod
     def _validate_nvidia_base_url(cls, value: str) -> str:
@@ -148,6 +205,8 @@ class Settings(BaseSettings):
             problems.append("SECRET_KEY must be set")
         if self.database_url is None:
             problems.append("DATABASE_URL must be set")
+        if self.auth_cookie_secure is False:
+            problems.append("AUTH_COOKIE_SECURE must not be false (production requires HTTPS)")
         if problems:
             raise ValueError("Invalid production configuration: " + "; ".join(problems))
         return self
@@ -163,6 +222,18 @@ class Settings(BaseSettings):
     @property
     def database_configured(self) -> bool:
         return self.database_url is not None
+
+    @property
+    def cookie_secure(self) -> bool:
+        if self.auth_cookie_secure is not None:
+            return self.auth_cookie_secure
+        return self.app_env not in (Environment.DEVELOPMENT, Environment.TEST)
+
+    @property
+    def public_frontend_url(self) -> str:
+        if self.frontend_base_url:
+            return self.frontend_base_url
+        return self.cors_origins[0] if self.cors_origins else "http://localhost:5173"
 
     @property
     def ai_configured(self) -> bool:

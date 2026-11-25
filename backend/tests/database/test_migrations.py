@@ -22,6 +22,7 @@ from app.database.base import Base
 from tests.conftest import BACKEND_DIR, alembic_config
 
 MIGRATIONS_DIR = BACKEND_DIR / "migrations" / "versions"
+AUTH_TABLES = {"users", "user_sessions", "retired_refresh_tokens", "password_reset_tokens", "auth_events"}
 
 
 def test_alembic_ini_contains_no_database_url() -> None:
@@ -31,16 +32,20 @@ def test_alembic_ini_contains_no_database_url() -> None:
 def test_single_linear_history_starting_with_application_settings() -> None:
     script = ScriptDirectory.from_config(alembic_config("postgresql://unused@localhost/unused_test"))
 
-    assert script.get_heads() == ["0001"]
+    assert script.get_heads() == ["0002"]
     revisions = list(script.walk_revisions())
-    assert [r.revision for r in revisions] == ["0001"]
-    assert revisions[0].down_revision is None
+    assert [r.revision for r in revisions] == ["0002", "0001"]
+    assert revisions[0].down_revision == "0001"
+    assert revisions[1].down_revision is None
 
 
 def test_migration_files_follow_the_naming_scheme() -> None:
     files = sorted(Path(MIGRATIONS_DIR).glob("*.py"))
 
-    assert [f.name for f in files] == ["2026_11_25_0001_create_application_settings.py"]
+    assert [f.name for f in files] == [
+        "2026_11_25_0001_create_application_settings.py",
+        "2026_11_25_0002_create_authentication_tables.py",
+    ]
 
 
 @pytest.fixture
@@ -79,17 +84,22 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         assert _tables(engine) == set()
 
         command.upgrade(config, "head")
-        assert _tables(engine) == {"alembic_version", "application_settings"}
-        assert _current_revision(engine) == "0001"
+        assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES}
+        assert _current_revision(engine) == "0002"
         _assert_application_settings_structure(engine)
+        _assert_auth_structure(engine)
+
+        command.downgrade(config, "0001")
+        assert _tables(engine) == {"alembic_version", "application_settings"}
 
         command.downgrade(config, "base")
         assert _tables(engine) == {"alembic_version"}
         assert _current_revision(engine) is None
 
         command.upgrade(config, "head")
-        assert _current_revision(engine) == "0001"
+        assert _current_revision(engine) == "0002"
         _assert_application_settings_structure(engine)
+        _assert_auth_structure(engine)
     finally:
         engine.dispose()
 
@@ -141,3 +151,26 @@ def _assert_application_settings_structure(engine: Engine) -> None:
         "ck_application_settings_value_not_null",
     }
     assert inspector.get_foreign_keys("application_settings") == []
+
+
+def _assert_auth_structure(engine: Engine) -> None:
+    inspector = inspect(engine)
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    assert {"email", "password_hash", "is_active", "is_superuser", "failed_login_attempts", "locked_until"} <= user_columns
+    assert "password" not in user_columns
+    indexes = {index["name"]: index for index in inspector.get_indexes("users")}
+    assert indexes["ix_users_email_live"]["unique"]
+    assert indexes["ix_users_username_live"]["unique"]
+
+    session_columns = {column["name"] for column in inspector.get_columns("user_sessions")}
+    assert "refresh_token_hash" in session_columns
+    assert not any(name in session_columns for name in ("refresh_token", "token"))
+    assert {fk["referred_table"]: fk["options"].get("ondelete") for fk in inspector.get_foreign_keys("user_sessions")} == {
+        "users": "CASCADE"
+    }
+    assert {index["name"] for index in inspector.get_indexes("user_sessions")} >= {
+        "ix_user_sessions_user_id",
+        "ix_user_sessions_expires_at",
+    }
+    reset_columns = {column["name"] for column in inspector.get_columns("password_reset_tokens")}
+    assert "token_hash" in reset_columns and "token" not in reset_columns

@@ -11,7 +11,14 @@ from tests.database.conftest import Widget
 
 def test_all_application_models_share_one_metadata() -> None:
     assert ApplicationSetting.__table__.metadata is Base.metadata
-    assert set(Base.metadata.tables) == {"application_settings"}
+    assert set(Base.metadata.tables) == {
+        "application_settings",
+        "users",
+        "user_sessions",
+        "retired_refresh_tokens",
+        "password_reset_tokens",
+        "auth_events",
+    }
 
 
 def test_constraint_names_follow_the_naming_convention() -> None:
