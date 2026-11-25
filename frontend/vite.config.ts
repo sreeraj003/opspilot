@@ -6,10 +6,12 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Read VITE_* variables from the repository root .env, shared with the backend and Docker Compose.
+  envDir: fileURLToPath(new URL("..", import.meta.url)),
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
-  server: { port: 5173, strictPort: true },
+  server: { host: true, port: 5173, strictPort: true },
   preview: { port: 4173, strictPort: true },
   test: {
     environment: "jsdom",

@@ -1,4 +1,12 @@
-/** Contracts mirrored from the backend's /api/v1 schemas (see backend/app/schemas). */
+/** Contracts mirrored from the backend response schemas (backend/app/schemas). */
+
+export interface AppInfoResponse {
+  name: string;
+  description: string;
+  version: string;
+  environment: string;
+  docs_url: string;
+}
 
 export interface HealthResponse {
   status: "ok";
@@ -8,29 +16,25 @@ export interface HealthResponse {
   timestamp: string;
 }
 
-export type CheckStatus = "ok" | "error" | "not_configured";
+export type DatabaseStatus = "ok" | "unavailable" | "not_configured";
 
-export interface DependencyCheck {
-  name: string;
-  status: CheckStatus;
-  required: boolean;
+export interface DatabaseHealthResponse {
+  status: DatabaseStatus;
+  database: string;
   latency_ms: number | null;
   detail: string | null;
-}
-
-export interface ReadinessResponse {
-  status: "ready" | "not_ready";
-  checks: DependencyCheck[];
   timestamp: string;
 }
 
-export interface ApiErrorBody {
+export interface ApiErrorDetail {
   code: string;
   message: string;
   details?: unknown;
-  request_id?: string | null;
+  request_id?: string;
 }
 
+/** Envelope the backend returns for every failed request. */
 export interface ApiErrorResponse {
-  error: ApiErrorBody;
+  success: false;
+  error: ApiErrorDetail;
 }

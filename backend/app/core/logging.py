@@ -1,18 +1,22 @@
-"""Structured logging configuration.
+"""Structured JSON logging with request correlation IDs.
 
-Emits one JSON object per line (or a readable console format for local work).
-Contextual fields passed through ``extra={...}`` are included in the output,
-and the current request ID is attached automatically when available.
+Every record is emitted as one JSON object per line with a timestamp, level,
+module, message and (inside a request) the request's correlation ID. Fields
+passed through ``extra={...}`` are included, except keys that look like
+secrets, which are redacted.
 """
 
 import json
 import logging
 import sys
+from contextvars import ContextVar, Token
 from datetime import UTC, datetime
 from typing import Any
 
-from app.core.config import LogFormat, Settings
-from app.core.request_context import get_request_id
+_request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
+
+REDACTED = "[REDACTED]"
+_SENSITIVE_KEY_PARTS = ("password", "secret", "token", "api_key", "apikey", "authorization", "database_url", "credential")
 
 # Attributes present on every LogRecord; anything else came from ``extra``.
 _RESERVED_ATTRS = frozenset(vars(logging.LogRecord("", 0, "", 0, "", None, None)).keys()) | {
@@ -23,8 +27,29 @@ _RESERVED_ATTRS = frozenset(vars(logging.LogRecord("", 0, "", 0, "", None, None)
 }
 
 
+def get_request_id() -> str | None:
+    return _request_id.get()
+
+
+def set_request_id(request_id: str | None) -> Token[str | None]:
+    return _request_id.set(request_id)
+
+
+def reset_request_id(token: Token[str | None]) -> None:
+    _request_id.reset(token)
+
+
+def _is_sensitive(key: str) -> bool:
+    lowered = key.lower()
+    return any(part in lowered for part in _SENSITIVE_KEY_PARTS)
+
+
 def _extra_fields(record: logging.LogRecord) -> dict[str, Any]:
-    return {key: value for key, value in vars(record).items() if key not in _RESERVED_ATTRS}
+    return {
+        key: REDACTED if _is_sensitive(key) else value
+        for key, value in vars(record).items()
+        if key not in _RESERVED_ATTRS
+    }
 
 
 class JsonFormatter(logging.Formatter):
@@ -32,7 +57,7 @@ class JsonFormatter(logging.Formatter):
         payload: dict[str, Any] = {
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
-            "logger": record.name,
+            "module": record.name,
             "message": record.getMessage(),
         }
         request_id = get_request_id()
@@ -44,36 +69,17 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
-class ConsoleFormatter(logging.Formatter):
-    def format(self, record: logging.LogRecord) -> str:
-        timestamp = datetime.fromtimestamp(record.created, tz=UTC).strftime("%H:%M:%S")
-        extras = _extra_fields(record)
-        request_id = get_request_id()
-        if request_id:
-            extras = {"request_id": request_id, **extras}
-        suffix = " ".join(f"{key}={value}" for key, value in extras.items())
-        line = f"{timestamp} {record.levelname:<8} {record.name}: {record.getMessage()}"
-        if suffix:
-            line = f"{line} | {suffix}"
-        if record.exc_info:
-            line = f"{line}\n{self.formatException(record.exc_info)}"
-        return line
-
-
-def configure_logging(settings: Settings) -> None:
-    """Install a single stdout handler on the root logger and align uvicorn's loggers."""
-    formatter: logging.Formatter = (
-        JsonFormatter() if settings.log_format == LogFormat.JSON else ConsoleFormatter()
-    )
+def configure_logging(level: str) -> None:
+    """Install a single JSON stdout handler on the root logger and align uvicorn's loggers."""
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
+    handler.setFormatter(JsonFormatter())
 
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
-    root.setLevel(settings.log_level)
+    root.setLevel(level)
 
-    # Route uvicorn logs through the root handler; our middleware logs requests itself.
+    # Route uvicorn's logs through the root handler; the request middleware logs access itself.
     for name in ("uvicorn", "uvicorn.error"):
         uvicorn_logger = logging.getLogger(name)
         uvicorn_logger.handlers.clear()

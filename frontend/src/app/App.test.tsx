@@ -1,24 +1,20 @@
-import { screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { renderRoute } from "@/test/utils";
+import { App } from "@/app/App";
 
-const neverResolves = vi.fn<typeof fetch>(() => new Promise<Response>(() => {}));
-
-describe("application shell and routing", () => {
-  it("renders the OpsPilot AI home screen", () => {
-    renderRoute("/", neverResolves);
-
-    expect(screen.getByRole("heading", { level: 1, name: "OpsPilot AI" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Main" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Backend connection" })).toBeInTheDocument();
-    expect(document.title).toBe("OpsPilot AI");
+describe("App", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
-  it("renders a not-found page for unknown routes inside the shell", () => {
-    renderRoute("/nowhere", neverResolves);
+  it("renders the application shell with the home page", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
 
-    expect(screen.getByRole("heading", { name: "Page not found" })).toBeInTheDocument();
+    render(<App />);
+
     expect(screen.getByLabelText("OpsPilot AI home")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "OpsPilot AI" })).toBeInTheDocument();
+    expect(screen.getByRole("contentinfo")).toHaveTextContent("AI-powered Business Intelligence Assistant");
   });
 });

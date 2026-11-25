@@ -1,11 +1,16 @@
-"""Database engine and session management."""
+"""SQLAlchemy engine and session management for the application database.
+
+One ``Database`` instance is created at application startup and disposed at
+shutdown. Each request that needs persistence gets its own session through
+the ``get_db_session`` dependency (see ``app.api.deps``): the session commits
+when the request succeeds, rolls back on any error and is always closed.
+"""
 
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
@@ -14,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class Database:
-    """Owns the SQLAlchemy engine and session factory for the application lifetime."""
+    """Owns the engine and session factory for the application lifetime."""
 
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
@@ -24,28 +29,29 @@ class Database:
     def from_settings(cls, settings: Settings) -> "Database":
         if settings.database_url is None:
             raise ValueError("DATABASE_URL is not configured")
-        url = make_url(settings.database_url.get_secret_value())
-        engine_kwargs: dict[str, object] = {"echo": settings.database_echo, "pool_pre_ping": True}
-        if url.get_backend_name() == "sqlite":
-            engine_kwargs["connect_args"] = {"check_same_thread": False}
-        else:
-            engine_kwargs["pool_size"] = settings.database_pool_size
-            engine_kwargs["max_overflow"] = settings.database_max_overflow
-            engine_kwargs["connect_args"] = {"connect_timeout": settings.database_connect_timeout_seconds}
-        return cls(create_engine(url, **engine_kwargs))
+        # Engine creation is lazy: no connection is opened until first use,
+        # so the application starts even while the database is still booting.
+        engine = create_engine(
+            settings.database_url.get_secret_value(),
+            pool_pre_ping=True,
+            pool_size=settings.database_pool_size,
+            max_overflow=settings.database_max_overflow,
+            connect_args={"connect_timeout": settings.database_connect_timeout_seconds},
+        )
+        return cls(engine)
 
     @property
     def dialect(self) -> str:
         return self.engine.dialect.name
 
     def ping(self) -> None:
-        """Run a trivial query; raises if the database is unreachable."""
+        """Run ``SELECT 1``; raises if the database is unreachable."""
         with self.engine.connect() as connection:
             connection.execute(text("SELECT 1"))
 
     @contextmanager
     def session(self) -> Iterator[Session]:
-        """Provide a transactional session: commit on success, roll back on error."""
+        """Provide a transactional session: commit on success, roll back on error, always close."""
         session = self._session_factory()
         try:
             yield session
@@ -58,4 +64,4 @@ class Database:
 
     def dispose(self) -> None:
         self.engine.dispose()
-        logger.info("Database engine disposed")
+        logger.info("Database connection pool closed")

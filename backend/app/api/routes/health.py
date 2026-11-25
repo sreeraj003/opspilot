@@ -1,17 +1,17 @@
-"""Liveness and readiness endpoints."""
+"""Health endpoints."""
 
 from fastapi import APIRouter, Response, status
 
 from app.api.deps import HealthServiceDep
-from app.schemas.health import HealthResponse, ReadinessResponse, ReadinessStatus
+from app.schemas.health import DatabaseHealthResponse, DatabaseStatus, HealthResponse
 
-router = APIRouter(tags=["health"])
+router = APIRouter(prefix="/health", tags=["health"])
 
 
 @router.get(
-    "/health",
+    "",
     response_model=HealthResponse,
-    summary="Liveness check",
+    summary="Application health",
     description="Returns 200 while the application process is running and serving requests.",
 )
 def health(service: HealthServiceDep) -> HealthResponse:
@@ -19,18 +19,17 @@ def health(service: HealthServiceDep) -> HealthResponse:
 
 
 @router.get(
-    "/ready",
-    response_model=ReadinessResponse,
-    summary="Readiness check",
+    "/database",
+    response_model=DatabaseHealthResponse,
+    summary="Application database health",
     description=(
-        "Reports whether the service can handle traffic. Returns 200 when every required "
-        "check passes and 503 otherwise. Dependencies that are not configured are reported "
-        "as 'not_configured' and do not count as connected."
+        "Runs `SELECT 1` against the application database. Returns 200 when it is reachable and 503 "
+        "when it is unreachable or not configured."
     ),
-    responses={503: {"model": ReadinessResponse, "description": "A required dependency is unavailable."}},
+    responses={503: {"model": DatabaseHealthResponse, "description": "The database is unavailable or not configured."}},
 )
-async def ready(service: HealthServiceDep, response: Response) -> ReadinessResponse:
-    result = await service.readiness()
-    if result.status == ReadinessStatus.NOT_READY:
+async def database_health(service: HealthServiceDep, response: Response) -> DatabaseHealthResponse:
+    result = await service.database_health()
+    if result.status is not DatabaseStatus.OK:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return result

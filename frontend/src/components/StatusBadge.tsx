@@ -1,5 +1,4 @@
 import { cn } from "@/utils/cn";
-import { humanize } from "@/utils/format";
 
 export type StatusTone = "success" | "warning" | "danger" | "neutral";
 
@@ -7,33 +6,23 @@ const TONE_CLASSES: Record<StatusTone, string> = {
   success: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
   warning: "bg-amber-50 text-amber-800 ring-amber-600/20",
   danger: "bg-rose-50 text-rose-700 ring-rose-600/20",
-  neutral: "bg-slate-100 text-slate-600 ring-slate-500/20",
+  neutral: "bg-stone-100 text-stone-600 ring-stone-500/20",
 };
 
 const DOT_CLASSES: Record<StatusTone, string> = {
   success: "bg-emerald-500",
   warning: "bg-amber-500",
   danger: "bg-rose-500",
-  neutral: "bg-slate-400",
+  neutral: "bg-stone-400",
 };
 
-export function toneForStatus(status: string): StatusTone {
-  switch (status) {
-    case "ok":
-    case "ready":
-      return "success";
-    case "not_configured":
-      return "neutral";
-    case "not_ready":
-    case "error":
-      return "danger";
-    default:
-      return "warning";
-  }
+interface StatusBadgeProps {
+  tone: StatusTone;
+  label: string;
+  pulse?: boolean;
 }
 
-export function StatusBadge({ status, label }: { status: string; label?: string }) {
-  const tone = toneForStatus(status);
+export function StatusBadge({ tone, label, pulse = false }: StatusBadgeProps) {
   return (
     <span
       className={cn(
@@ -41,8 +30,8 @@ export function StatusBadge({ status, label }: { status: string; label?: string 
         TONE_CLASSES[tone],
       )}
     >
-      <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", DOT_CLASSES[tone])} />
-      {label ?? humanize(status)}
+      <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", DOT_CLASSES[tone], pulse && "animate-pulse")} />
+      {label}
     </span>
   );
 }

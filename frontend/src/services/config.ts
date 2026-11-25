@@ -5,18 +5,23 @@ export interface AppConfig {
   apiTimeoutMs: number;
 }
 
-const DEFAULT_API_BASE_URL = "http://localhost:8000/api/v1";
+const DEFAULT_API_BASE_URL = "http://localhost:8000";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 export function parseConfig(env: Record<string, string | undefined>): AppConfig {
   const rawBaseUrl = env.VITE_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL;
   let apiBaseUrl: string;
-  try {
-    // Relative paths (e.g. "/api/v1" behind a reverse proxy) resolve against the page origin.
-    const url = new URL(rawBaseUrl, globalThis.location?.origin ?? "http://localhost");
-    apiBaseUrl = rawBaseUrl.startsWith("/") ? url.pathname : url.toString();
-  } catch {
-    throw new Error(`Invalid VITE_API_BASE_URL: "${rawBaseUrl}"`);
+  if (rawBaseUrl.startsWith("/")) {
+    // A relative path (for example "/api" behind a reverse proxy) resolves against the page origin.
+    apiBaseUrl = rawBaseUrl;
+  } else {
+    try {
+      const url = new URL(rawBaseUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("unsupported protocol");
+      apiBaseUrl = url.toString();
+    } catch {
+      throw new Error(`Invalid VITE_API_BASE_URL: "${rawBaseUrl}"`);
+    }
   }
 
   const rawTimeout = env.VITE_API_TIMEOUT_MS?.trim();

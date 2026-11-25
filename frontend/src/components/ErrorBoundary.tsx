@@ -34,19 +34,19 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
 export function ErrorFallback({ error, onReset }: { error: Error; onReset?: () => void }) {
   return (
-    <div role="alert" className="mx-auto mt-24 max-w-lg rounded-xl border border-rose-200 bg-white p-6 shadow-sm">
-      <h2 className="text-lg font-semibold text-rose-700">Something went wrong</h2>
-      <p className="mt-2 text-sm text-slate-600">
+    <div role="alert" className="mx-auto mt-24 max-w-lg rounded-xl border border-stone-200 bg-white p-6 shadow-sm">
+      <h2 className="text-lg font-semibold text-stone-900">Something went wrong</h2>
+      <p className="mt-2 text-sm text-stone-600">
         An unexpected error occurred while rendering this page.
       </p>
       {import.meta.env.DEV && (
-        <pre className="mt-3 overflow-auto rounded bg-slate-50 p-3 text-xs text-slate-700">{error.message}</pre>
+        <pre className="mt-3 overflow-auto rounded bg-stone-50 p-3 text-xs text-stone-700">{error.message}</pre>
       )}
       {onReset && (
         <button
           type="button"
           onClick={onReset}
-          className="mt-4 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+          className="mt-4 rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900"
         >
           Try again
         </button>

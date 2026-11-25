@@ -1,4 +1,4 @@
-"""Health and readiness response contracts."""
+"""Response contracts for the application information and health endpoints."""
 
 from datetime import datetime
 from enum import StrEnum
@@ -6,34 +6,31 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 
+class AppInfoResponse(BaseModel):
+    name: str
+    description: str
+    version: str
+    environment: str
+    docs_url: str
+
+
 class HealthResponse(BaseModel):
-    status: str = Field(description="Always 'ok' when the process is serving requests.")
+    status: str = Field(description="Always 'ok' while the process is serving requests.")
     service: str
     version: str
     environment: str
     timestamp: datetime
 
 
-class CheckStatus(StrEnum):
+class DatabaseStatus(StrEnum):
     OK = "ok"
-    ERROR = "error"
+    UNAVAILABLE = "unavailable"
     NOT_CONFIGURED = "not_configured"
 
 
-class ReadinessStatus(StrEnum):
-    READY = "ready"
-    NOT_READY = "not_ready"
-
-
-class DependencyCheck(BaseModel):
-    name: str
-    status: CheckStatus
-    required: bool = Field(description="Whether a failure of this check makes the service not ready.")
+class DatabaseHealthResponse(BaseModel):
+    status: DatabaseStatus
+    database: str = Field(description="Database dialect, never the connection URL.")
     latency_ms: float | None = None
     detail: str | None = None
-
-
-class ReadinessResponse(BaseModel):
-    status: ReadinessStatus
-    checks: list[DependencyCheck]
     timestamp: datetime

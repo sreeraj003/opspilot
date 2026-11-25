@@ -1,9 +1,13 @@
-"""Declarative base shared by all ORM models."""
+"""Declarative base shared by all ORM models.
+
+No tables are defined in Module 01. Later modules declare their models on
+``Base`` and generate Alembic migrations from ``Base.metadata``.
+"""
 
 from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase
 
-# Deterministic constraint names keep future Alembic migrations stable.
+# Deterministic constraint names keep Alembic migrations stable across databases.
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
     "uq": "uq_%(table_name)s_%(column_0_name)s",

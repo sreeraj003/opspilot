@@ -1,11 +1,11 @@
-"""Standard error response envelope returned by every failing endpoint."""
+"""Standard error envelope returned by every failing endpoint."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
 
-class ErrorBody(BaseModel):
+class ErrorDetail(BaseModel):
     code: str
     message: str
     details: Any | None = None
@@ -13,4 +13,5 @@ class ErrorBody(BaseModel):
 
 
 class ErrorResponse(BaseModel):
-    error: ErrorBody
+    success: Literal[False] = False
+    error: ErrorDetail

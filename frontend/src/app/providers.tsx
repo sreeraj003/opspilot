@@ -3,7 +3,7 @@ import { useState, type ReactNode } from "react";
 
 import { createQueryClient } from "@/app/queryClient";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { ApiClientContext } from "@/hooks/useApiClient";
+import { ApiClientContext } from "@/hooks/apiClientContext";
 import { apiClient as defaultApiClient, type ApiClient } from "@/services/apiClient";
 
 interface AppProvidersProps {

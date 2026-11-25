@@ -1,182 +1,233 @@
 # OpsPilot AI
 
-Enterprise operations intelligence and automation platform, built as a modular monolith:
+OpsPilot AI is an AI-powered Business Intelligence Assistant. People in a company ask business questions in
+natural language; OpsPilot turns each question into SQL, passes that SQL through an independent security and
+authorization layer, runs approved queries through the company's own existing GET API, and answers in plain
+language based on the real results.
 
-- `backend/`: Python, FastAPI, Pydantic Settings, SQLAlchemy (API under `/api/v1`)
-- `frontend/`: React, TypeScript, Vite, Tailwind CSS, React Router, TanStack Query
+Each company installs and runs its **own independent copy** of OpsPilot AI. It is not a multi-tenant SaaS
+product, and it never connects directly to the company's business database.
 
-Both apps run independently. The frontend talks to the backend over HTTP using `VITE_API_BASE_URL`.
+> **Status:** Module 01 (project foundation) is implemented. Authentication, schema registration, the external
+> API integration, the LLM, SQL generation, the SQL security guard and the chat interface arrive in later
+> modules. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+
+## Architecture overview
+
+```
+Browser ──> frontend (React SPA) ──HTTP/JSON──> backend (FastAPI) ──> application database (PostgreSQL)
+                                                     │
+                                                     └──(later modules)──> company GET SQL API, LLM provider
+```
+
+- **frontend/**: React + TypeScript single-page app. Talks to the backend only through one API client.
+- **backend/**: FastAPI service. Owns configuration, logging, error handling and OpsPilot's own database.
+- **Application database**: PostgreSQL holding OpsPilot's own data (users, registered schemas, settings,
+  conversations in later modules). It is *not* the company's business database.
+
+Details are in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Technology stack
+
+| Area | Technologies |
+| --- | --- |
+| Backend | Python 3.12+, FastAPI, Pydantic v2 + pydantic-settings, SQLAlchemy 2.x, Alembic, psycopg 3, Uvicorn, HTTPX (tests) |
+| Frontend | React 19, TypeScript (strict), Vite, Tailwind CSS 4, React Router, TanStack Query, Lucide icons |
+| Tests | Pytest + HTTPX (backend), Vitest + React Testing Library (frontend) |
+| Infrastructure | Docker, Docker Compose, PostgreSQL 16, nginx (serves the built frontend) |
+
+Recharts is part of the planned stack but is not installed yet: nothing in Module 01 draws a chart, and unused
+dependencies are avoided. It will be added with the analytics module.
 
 ## Prerequisites
 
-- Python 3.12 or newer (developed and tested on 3.13)
-- Node.js 22 LTS or newer, npm 10+
+- **Docker route:** Docker Engine 24+ with Docker Compose v2.
+- **Local route:** Python 3.12 or newer, Node.js 22 LTS with npm 10+, and a PostgreSQL 16 server (the
+  Compose database works, see below).
 
-## Backend
+## Environment setup
+
+All configuration lives in one file at the repository root:
+
+```bash
+cp .env.example .env          # Windows: copy .env.example .env
+```
+
+Then edit `.env`:
+
+- `POSTGRES_PASSWORD`: required for Docker Compose. Use URL-safe characters (it is embedded in a URL).
+- `DATABASE_URL`: only for running the backend outside Docker.
+- `SECRET_KEY`: required (32+ characters) when `APP_ENV=production`.
+- `NVIDIA_*`: optional until the LLM module.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `APP_NAME` | `OpsPilot AI` | Display name returned by the API |
+| `APP_ENV` | `development` | `development`, `test`, `staging` or `production` |
+| `APP_DEBUG` | `false` | Must be `false` in production |
+| `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | Bind address for a locally started backend |
+| `DATABASE_URL` | empty | PostgreSQL URL (`postgresql+psycopg://…`; `postgresql://` is accepted and converted). Required in production |
+| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins allowed to call the API. `*` is rejected |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` |
+| `SECRET_KEY` | empty | Application secret, 32+ characters. Required in production |
+| `NVIDIA_API_KEY` / `NVIDIA_MODEL` | empty | LLM provider credentials (optional for now) |
+| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | LLM provider endpoint (must be https) |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `opspilot` / — / `opspilot` | Docker Compose database credentials |
+| `VITE_API_BASE_URL` | `http://localhost:8000` | Backend URL as seen from the browser (built into the frontend) |
+| `VITE_API_TIMEOUT_MS` | `10000` | Frontend request timeout |
+
+Invalid configuration stops the backend at startup with a message naming the setting. Error messages never
+echo the values themselves, because they may be secrets.
+
+## Running with Docker Compose
+
+```bash
+cp .env.example .env            # set POSTGRES_PASSWORD
+docker compose up --build
+```
+
+| Service | URL | Notes |
+| --- | --- | --- |
+| frontend | <http://localhost:5173> | nginx serving the built app |
+| backend | <http://localhost:8000> | API docs at <http://localhost:8000/docs> |
+| db | not published | Only reachable on the internal `data` network |
+
+The backend waits for a healthy database, applies Alembic migrations, then starts. The frontend waits for a
+healthy backend. Database files live in the `postgres_data` volume, so they survive `docker compose down`
+(`docker compose down -v` deletes them).
+
+## Installing and running locally
+
+Start only the database from Compose, published on `127.0.0.1:5432`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
+```
+
+and set `DATABASE_URL=postgresql+psycopg://opspilot:<POSTGRES_PASSWORD>@localhost:5432/opspilot` in `.env`.
+
+### Backend
 
 ```bash
 cd backend
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
-cp .env.example .env               # Windows: copy .env.example .env
+alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
-- Health: <http://localhost:8000/api/v1/health>
-- Readiness: <http://localhost:8000/api/v1/ready>
-- OpenAPI docs: <http://localhost:8000/api/v1/docs>
+The backend reads the root `.env` (and `backend/.env`, if present, which takes priority).
 
-Run tests:
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /` | Application name, description, version, environment |
+| `GET /health` | Application health (`200` while the process serves requests) |
+| `GET /health/database` | Runs `SELECT 1` on the application database: `200 ok`, or `503` with `unavailable` / `not_configured` |
+| `GET /docs`, `/redoc`, `/openapi.json` | OpenAPI documentation |
+
+Health responses never include URLs, host names or credentials.
+
+### Frontend
+
+```bash
+cd frontend
+npm ci
+npm run dev                        # http://localhost:5173
+```
+
+The home page shows live **System status** cards for the application, the backend API and the database: the
+quickest way to confirm the frontend can reach the backend.
+
+Other scripts: `npm run build`, `npm run preview`, `npm run typecheck`.
+
+## Running tests
+
+### Backend
 
 ```bash
 cd backend
 pytest
 ```
 
-### Configuration
-
-All settings come from environment variables (or `backend/.env`). See [`backend/.env.example`](backend/.env.example).
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ENVIRONMENT` | `development` | `development`, `test`, `staging` or `production` |
-| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `json` | Structured JSON logs, or `console` for local reading |
-| `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated browser origins allowed to call the API |
-| `DATABASE_URL` | empty | PostgreSQL URL, e.g. `postgresql+psycopg://user:pass@localhost:5432/opspilot`. Required for auth and all data endpoints |
-| `JWT_SECRET_KEY` | empty | HMAC key for access tokens (32+ chars). Required in staging/production; random per start in development |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` / `REFRESH_TOKEN_EXPIRE_DAYS` | `15` / `14` | Access token lifetime / absolute session lifetime |
-| `ALLOW_PUBLIC_REGISTRATION` | `true` | Allow self-service sign-up of new organizations |
-
-The full list (cookie, Argon2 and rate-limit settings) is in `.env.example`.
-
-### Database and migrations
+Tests that need a real PostgreSQL server are marked `postgres` and are **skipped** unless `TEST_DATABASE_URL`
+points to a disposable database:
 
 ```bash
-cd backend
-alembic upgrade head                      # create tables and seed roles/permissions
-python -m app.cli create-platform-admin --email admin@example.com --name "Platform Admin"
-                                          # password from OPSPILOT_ADMIN_PASSWORD or a prompt
+TEST_DATABASE_URL=postgresql://opspilot:<password>@localhost:5432/opspilot pytest
 ```
 
-Tests migrate a temporary SQLite database by default. To run them against PostgreSQL (the production
-target), point `TEST_DATABASE_URL` at a disposable database; it is wiped at the start of the run:
+Without it, the database tests still check the `not_configured` and `unavailable` behaviour, but a passing run
+does not claim connectivity.
 
-```bash
-TEST_DATABASE_URL=postgresql+psycopg://postgres@localhost:5432/opspilot_test pytest
-```
-
-### Authentication and authorization
-
-Endpoints under `/api/v1/auth`:
-
-| Endpoint | Purpose |
-| --- | --- |
-| `POST /auth/register` | Create a new organization and its first user (Organization Admin), then sign in |
-| `POST /auth/login` | Email + password. Returns a JWT access token and a refresh token (also set as an HttpOnly, SameSite=Strict cookie scoped to `/api/v1/auth`) |
-| `POST /auth/refresh` | Rotate the refresh token (body or cookie) and get a new access token |
-| `POST /auth/logout` | Revoke the current session (bearer token and/or refresh token). Always `204` |
-| `POST /auth/logout-all` | Revoke every session of the current user |
-| `GET /auth/me` | Current user, organization, roles and effective permissions |
-
-Send the access token as `Authorization: Bearer <token>`. In the OpenAPI docs use **Authorize**.
-
-How it works:
-
-- **Passwords** are hashed with Argon2id; outdated hashes are upgraded on the next login. Policy: at least
-  12 characters, three of four character classes, not a common password, not containing the email name.
-- **Access tokens** are short-lived HS256 JWTs carrying only user, organization and session ids. Roles,
-  permissions, account state and session state are re-checked on every request, so deactivation, logout
-  and role changes take effect immediately.
-- **Refresh tokens** are random opaque strings stored only as SHA-256 digests. Each one works once. Presenting
-  a used token again is treated as theft: the whole session is revoked and an audit event is written.
-- **Login errors** are always the generic `401 Invalid email or password.` (unknown email, wrong password and
-  disabled accounts look the same). Login is rate limited per client IP and per account (`429` + `Retry-After`).
-- **Authorization** is permission-based: routes declare
-  `Depends(require_permissions(Permission.USERS_READ))`; role names appear only in `app/security/rbac.py`.
-  Roles: Super Admin, Organization Admin, Operations Manager, Support Agent, Analyst, Developer, Viewer.
-  Users can only assign roles whose permissions they hold themselves.
-- **Tenant isolation**: the organization always comes from the authenticated identity. Repositories take
-  the organization id explicitly; another tenant's records are `404`. A client-supplied `organization_id`
-  is honoured only for holders of `platform.admin` (Super Admin) and is otherwise `403`.
-- **Audit events** are written for registration, login success/failure, refresh, refresh-token reuse, logout,
-  permission denials and user administration. `GET /api/v1/audit-events` (needs `audit.read`).
-
-User administration (organization-scoped): `GET/POST /api/v1/users`, `GET /api/v1/users/{id}`,
-`PUT /api/v1/users/{id}/roles`, `POST /api/v1/users/{id}/deactivate|activate`, `GET /api/v1/roles`.
-
-### Health and readiness
-
-- `GET /api/v1/health` returns `200` with service name, version, environment and timestamp while the process is serving.
-- `GET /api/v1/ready` returns a list of checks. It returns `200` with `"status": "ready"` when every **required** check passes, otherwise `503` with `"status": "not_ready"`.
-  - `application` is always checked.
-  - `database`: when `DATABASE_URL` is empty it is reported as `not_configured` (not required, never shown as connected). When it is set, the API runs `SELECT 1`; failure makes the service not ready.
-
-### Error format
-
-Every error response uses one envelope, and every response carries an `X-Request-ID` header (a valid incoming one is propagated):
-
-```json
-{ "error": { "code": "not_found", "message": "…", "details": null, "request_id": "…" } }
-```
-
-Unhandled exceptions return a generic `500 internal_error`; details go only to the logs.
-
-### Backend layout
-
-```
-backend/app/
-  api/routes/     HTTP route handlers (thin; delegate to services)
-  api/deps.py     Dependency-injection providers (settings, database, sessions, services)
-  core/           Settings, logging, lifespan, exceptions, request context
-  database/       Declarative base and engine/session management
-  models/         ORM models (organizations, users, RBAC, sessions/refresh tokens, audit events)
-  schemas/        Pydantic request/response contracts
-  repositories/   Data access (tenant-scoped queries take the organization id explicitly)
-  security/       Password hashing/policy, JWT and refresh tokens, RBAC catalog, tenancy, rate limiting
-  services/       Business logic
-  integrations/   Adapters for external systems
-  middleware/     Request-ID/access logging middleware and exception handlers
-  utils/          Small shared helpers
-  cli.py          Admin commands (create-platform-admin)
-  main.py         Application factory (`create_app`) and ASGI `app`
-backend/migrations/  Alembic migrations (URL comes from DATABASE_URL)
-```
-
-## Frontend
+### Frontend
 
 ```bash
 cd frontend
-npm ci
-cp .env.example .env.local         # Windows: copy .env.example .env.local
-npm run dev                        # http://localhost:5173
+npm test                           # Vitest + React Testing Library
+npm run typecheck
 ```
 
-Other scripts: `npm test` (Vitest + React Testing Library), `npm run typecheck`, `npm run build`, `npm run preview`.
+## Error format
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `VITE_API_BASE_URL` | `http://localhost:8000/api/v1` | Backend base URL including the version prefix. A relative path such as `/api/v1` also works behind a reverse proxy. |
-| `VITE_API_TIMEOUT_MS` | `10000` | Per-request timeout |
+Every failed request returns the same envelope and an `X-Request-ID` header:
 
-The home page shows a live **Backend connection** panel that calls `/health` and `/ready`, which is the quickest way to confirm the two apps are connected.
+```json
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "The requested resource was not found.",
+    "request_id": "3f6c0f1e9b5d4f7f8a2b1c0d9e8f7a6b"
+  }
+}
+```
 
-### Frontend layout
+Unexpected exceptions return `500 INTERNAL_SERVER_ERROR` with a generic message; the traceback goes to the logs
+only. Logs are JSON lines with `timestamp`, `level`, `module`, `message` and `request_id`. Fields that look like
+secrets (`password`, `token`, `api_key`, `authorization`, `database_url`, …) are redacted.
+
+## Project layout
 
 ```
-frontend/src/
-  app/         Entry composition: App, providers, routes, query client
-  components/  Reusable UI (ErrorBoundary, StatusBadge)
-  layouts/     AppShell (header, navigation, outlet)
-  features/    Feature modules (system-status: API calls, query hooks, panel)
-  pages/       Route-level pages
-  hooks/       Shared hooks (API client injection, document title)
-  services/    API client and environment config
-  types/       API contract types
-  utils/       Formatting and class-name helpers
-  styles/      Tailwind entry and global styles
+backend/
+  app/
+    api/            deps.py (dependency providers), router.py, routes/ (thin HTTP handlers)
+    core/           config.py, logging.py, exceptions.py, middleware.py (request correlation)
+    database/       base.py (declarative Base), session.py (engine, sessions)
+    schemas/        Pydantic response contracts
+    services/       Logic behind the routes (health checks)
+    main.py         Application factory and ASGI app
+  migrations/       Alembic environment (no revisions yet: Module 01 defines no tables)
+  tests/
+frontend/
+  src/
+    app/            App, providers, routes, query client
+    components/     Reusable UI (status cards, badges, error boundary)
+    layouts/        AppShell
+    pages/          HomePage, NotFoundPage
+    services/       API client, environment config, typed endpoint calls
+    hooks/          API client injection, status queries, document title
+    types/          API contract types
+    utils/, styles/
+docker-compose.yml, docker-compose.dev.yml, .env.example
 ```
+
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `required variable POSTGRES_PASSWORD is missing a value` | Create `.env` from `.env.example` and set `POSTGRES_PASSWORD`. |
+| Backend exits with `Invalid production configuration` | In production set `SECRET_KEY` (32+ chars) and `DATABASE_URL`, and set `APP_DEBUG=false`. |
+| `/health/database` returns `not_configured` | `DATABASE_URL` is empty for a locally started backend. |
+| `/health/database` returns `unavailable` | PostgreSQL is not running or not reachable. Check `docker compose ps` and the password in `DATABASE_URL`. |
+| Changed `POSTGRES_PASSWORD` and the backend can no longer log in | PostgreSQL keeps the password from the first start. Change it inside the database, or run `docker compose down -v` to recreate it (deletes data). |
+| Frontend shows **Unreachable** | The backend is down, `VITE_API_BASE_URL` is wrong, or the page origin is missing from `CORS_ORIGINS`. |
+| Changed `VITE_API_BASE_URL` has no effect in Docker | It is built into the bundle: run `docker compose up --build frontend`. |
+| Port 8000, 5173 or 5432 is busy | Set `BACKEND_PORT`, `FRONTEND_PORT` or `POSTGRES_PORT` in `.env` (update `CORS_ORIGINS` to match). |
+| `pip`/`npm` fail with certificate errors during `docker compose build` | A TLS-intercepting corporate proxy is in the way. Add its CA to the build environment; do not disable verification. |
 
 ## Secrets
 
-`.env` files are git-ignored at the root and in each app; only `.env.example` files are committed.
+`.env` files are git-ignored; only `.env.example` is committed. Docker images contain no secrets: they receive
+configuration at runtime. `VITE_*` values are compiled into browser JavaScript, so they must never hold secrets.

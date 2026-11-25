@@ -1,7 +1,7 @@
-export function formatDateTime(value: string | Date, locale?: string): string {
+export function formatTime(value: string | Date, locale?: string): string {
   const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "medium" }).format(date);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return new Intl.DateTimeFormat(locale, { timeStyle: "medium" }).format(date);
 }
 
 export function humanize(value: string): string {
