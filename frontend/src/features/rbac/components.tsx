@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/Button";
 
 export const SELECT_CLASSES =
   "rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 shadow-sm focus:border-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-900/10";
-export const INPUT_CLASSES =
-  "w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-900/10";
+/** Input styling without a width, for inputs sized by their container (inline rows). */
+export const FIELD_CLASSES =
+  "rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-900/10";
+export const INPUT_CLASSES = `w-full ${FIELD_CLASSES}`;
 
 export function ActiveBadge({ active }: { active: boolean }) {
   return active ? <StatusBadge tone="success" label="Active" /> : <StatusBadge tone="neutral" label="Inactive" />;

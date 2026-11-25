@@ -2,14 +2,127 @@
 
 ## Current module
 
-**Module 03: Authentication and user management.** Implemented and verified on 2026-11-25.
-Awaiting the project owner's review. Module 04 has not been started.
+**Module 04: Dynamic role-based access control and permission engine.** Implemented and verified on 2026-11-25.
+Awaiting the project owner's review. Module 05 has not been started.
 
-Single installation, single organisation: there is no tenant model (the earlier multi-tenant design was not revived).
-Modules 01 and 02 are unchanged in behaviour, except that the settings API now requires authentication; their
-records are kept below.
+Single installation, single organisation: no tenant model. Modules 01 to 03 keep their behaviour; Module 03's
+bootstrap authorization is replaced by the database-backed engine whenever a database is configured. Earlier records
+are kept below.
 
-## Module 03: what was implemented
+## Module 04: what was implemented
+
+Backend
+- **Models** (`app/models/rbac.py`): `roles`, `permissions` (structured JSONB `policy_definition`, `resource_type`,
+  `action`, optional `expires_at`), `role_permissions`, `user_roles` (optional expiry), `user_permissions` (direct
+  grant or deny, optional narrowing override, optional expiry), `rbac_audit_events`, `authorization_state`
+  (policy revision). Soft deletes and revocation timestamps keep history; keys are unique among live rows.
+- **Policy format and validator** (`app/authorization/policy.py`, [docs/PERMISSION_POLICY.md](docs/PERMISSION_POLICY.md)):
+  versioned JSON, never code or SQL. Operators `equals`, `not_equals`, `in`, `not_in`, `greater_than`,
+  `greater_than_or_equal`, `less_than`, `less_than_or_equal`, `between`, `is_null`, `is_not_null`; value types
+  string, number, boolean, date, datetime; nested AND/OR groups with depth and size limits; detection of
+  contradictions and duplicates; normalized storage. Schema-aware checks are behind a `SchemaCatalog` protocol
+  (no schemas exist yet, so they are skipped).
+- **Engine** (`app/authorization/engine.py`): deny by default; inactive users denied; expired, revoked and inactive
+  grants ignored; direct denies remove permissions; deny policies always win; row-level and column-level
+  restrictions returned as structured decisions, never SQL. Three queries resolve any number of users.
+- **Cache** (`app/authorization/cache.py`): bounded per-process LRU validated against the database revision, which
+  every RBAC change and user (de)activation or deletion increments in the same transaction.
+- **System permissions**: `users:read/manage`, `settings:read/manage`, `roles:read/manage`,
+  `permissions:read/manage`, `access:review/assign`. The `manage`/`assign` ones are reserved to the built-in
+  Administrator role; administrators get no implicit data access. No CEO/Manager or other business role is built in.
+- **Protections**: no self-assignment (except the installation superuser), administrator-only permissions cannot be
+  delegated, system roles and permissions are immutable, the last administrator cannot be removed, roles in use
+  cannot be deleted, every change is audited.
+- **AI authorization context** (`GET /authorization/me/ai-context`, `AuthorizationEngine.ai_authorization_context`):
+  the user's roles, permission keys, resources, tables, columns, row filters and flags, with no credentials, tokens,
+  session data, email or system permissions; marked `is_authorization_token: false`.
+- **CLI**: `python -m app.cli sync-permissions` restores the built-in permissions and Administrator role.
+
+Frontend
+- `PermissionsProvider` / `usePermissions()` (`hasPermission`, `canAccessResource`, `effectivePermissions`) backed by
+  `GET /authorization/me`; navigation, route guards and buttons use it.
+- Pages: Roles list, Role detail (permission editor with a review of changes), Permissions list, Permission
+  create/edit with a form-based policy builder (tables, columns, operations, nested AND/OR row filters, deny rules,
+  export/SQL flags), a server-validated review step with a plain-language summary and read-only JSON, and an access
+  section on the User page (roles and direct grants/denials with expiry, effective access).
+
+### Tables
+
+`roles`, `permissions`, `role_permissions`, `user_roles`, `user_permissions`, `rbac_audit_events`,
+`authorization_state`.
+
+### Migrations
+
+`0003_create_rbac_tables`: creates the tables above and seeds the ten system permissions, the Administrator role
+holding them, and revision 1. Downgrade drops them.
+
+### API endpoints (under `/api/v1`)
+
+| Endpoint | Permission |
+| --- | --- |
+| `GET/POST /roles`, `GET/PATCH/DELETE /roles/{id}` | `roles:read` / `roles:manage` |
+| `POST/PUT /roles/{id}/permissions`, `DELETE /roles/{id}/permissions/{permission_id}` | `roles:manage` |
+| `GET/POST /permissions`, `GET/PATCH/DELETE /permissions/{id}` | `permissions:read` / `permissions:manage` |
+| `POST /permissions/validate-policy` | `permissions:manage` |
+| `GET /users/{id}/roles`, `/permissions`, `/effective-permissions` | `access:review` |
+| `POST/DELETE /users/{id}/roles[/{role_id}]`, `POST/DELETE /users/{id}/permissions[/{permission_id}]` | `access:assign` |
+| `GET /authorization/me`, `GET /authorization/me/ai-context` | signed in |
+| `POST /authorization/check` | signed in (own access); `access:review` for another user |
+
+### Frontend pages
+
+`/admin/roles`, `/admin/roles/:roleId`, `/admin/permissions`, `/admin/permissions/new`,
+`/admin/permissions/:permissionId`, and the access section on `/admin/users/:userId`.
+
+### New configuration
+
+`AUTHORIZATION_POLICY_MAX_DEPTH` (4), `AUTHORIZATION_POLICY_MAX_CONDITIONS` (50), `AUTHORIZATION_CACHE_SIZE` (1024).
+No new dependencies.
+
+### Commands executed and results (Module 04)
+
+| Command | Result |
+| --- | --- |
+| `pytest` with `TEST_DATABASE_URL` (PostgreSQL 16) | **364 passed, 0 skipped** (55 s) |
+| `pytest` without `TEST_DATABASE_URL` | **166 passed, 198 skipped** (skipped = the PostgreSQL tests) |
+| `alembic upgrade head` on an empty database, `alembic check`, `alembic downgrade base`, `alembic upgrade head` | `0001 → 0002 → 0003`; `No new upgrade operations detected`; downgrade and re-upgrade clean |
+| `python -m app.cli sync-permissions` after the migration | `0 change(s) made`; 10 system permissions, role `administrator`, revision 1 |
+| `npx vitest run` | **93 passed** in 19 files |
+| `npx tsc -b` | OK, no errors |
+| `npm run build` | OK; JS 603 kB (178 kB gzip); Vite chunk-size warning as before |
+| Headless Chromium against uvicorn + Vite on a fresh database | Signed in as the administrator; created a permission with an OR group through the builder; a contradictory filter was rejected with the server's message; created a role, added the permission after the review step; created a user, assigned the role; the user page showed the effective row filter |
+
+Backend test coverage added:
+
+| Area | File | Tests |
+| --- | --- | --- |
+| Policy validation: every operator and value type, groups, depth and size limits, contradictions, duplicates, normalisation, overrides | `tests/rbac/test_policy_validation.py` | 58 |
+| Assignments and the engine: deny by default, explicit deny wins, expiry and revocation, inactive users/roles/permissions, row and column restrictions, multiple roles, self-assignment and escalation attempts, last administrator, 401/403 | `tests/rbac/test_assignments_and_authorization.py` | 31 |
+| Roles and permissions API: CRUD, search, system protections, invalid policies, audit history | `tests/rbac/test_roles_and_permissions_api.py` | 13 |
+| AI context content and exclusions, cache hits, bulk resolution, revision bumps, cache bounds | `tests/rbac/test_ai_context_and_cache.py` | 9 |
+| Built-in catalog repair | `tests/rbac/test_system_catalog.py` | 3 |
+
+Frontend tests added: policy builder model (6), roles list and creation (6), permission builder, review, server
+errors and read-only views (7), role permission assignment (3), user role assignment and effective access (5),
+`usePermissions` and navigation (4).
+
+Not run in Module 04: a native Windows run, Docker Compose (the images are unchanged apart from application code),
+load or penetration testing.
+
+### Security limitations and known gaps
+
+- **Data permissions are not enforced on data yet.** No query reaches business data until the SQL security pipeline
+  exists; the engine returns structured decisions for that module to apply.
+- **Table and column names are not checked against real schemas** until schema registration exists.
+- **The UI decides only what to show.** Every request is authorized by the server.
+- **`POST /authorization/check`** is a diagnostic endpoint; its answer is not a token and must not be trusted by clients.
+- **The cache is per process**, but correctness does not depend on it (one revision lookup per decision).
+- **Audit events** are readable per role and permission (history), but there is no global audit viewer or retention policy.
+- **No approval workflow** for access changes, and no bulk assignment.
+- The engine has been tested extensively but has had **no external security review**; this is not a
+  production-readiness claim.
+
+## Module 03 record
 
 Backend
 - **Passwords**: Argon2id (argon2-cffi, RFC 9106 low-memory profile: t=3, m=64 MiB, p=4), NFKC-normalised, never
@@ -160,7 +273,7 @@ or penetration testing.
 - **No email verification flow**; `is_verified` is stored but not enforced.
 - **No MFA**, no per-user session list for the user themselves (administrators can see and revoke sessions).
 - **Audit events have no read API or retention policy** yet.
-- **Bootstrap permissions only**: administrator or ordinary user. Roles and fine-grained permissions are Module 04.
+- **Bootstrap permissions only**: administrator or ordinary user. (Status now: replaced by Module 04's roles and permissions.)
 - **Every authenticated request reads the session and user rows** (immediate revocation at the cost of one query).
 - **Without `SECRET_KEY`** (development only) a random key is generated at each start, so access tokens stop working
   after a restart and browsers silently refresh. Production requires `SECRET_KEY`.
@@ -394,4 +507,4 @@ Documentation
 
 ## Next module
 
-Module 04, as defined by the project owner. Not started: waiting for review and approval of Module 03.
+Module 05, as defined by the project owner. Not started: waiting for review and approval of Module 04.

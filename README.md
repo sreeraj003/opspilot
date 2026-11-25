@@ -8,10 +8,10 @@ language based on the real results.
 Each company installs and runs its **own independent copy** of OpsPilot AI. It is not a multi-tenant SaaS
 product, and it never connects directly to the company's business database.
 
-> **Status:** Module 01 (project foundation), Module 02 (application database layer) and Module 03
-> (authentication and user management) are implemented. Roles and permissions, schema registration, the external
-> API integration, the LLM, SQL generation, the SQL security guard and the chat interface arrive in later
-> modules. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+> **Status:** Module 01 (project foundation), Module 02 (application database layer), Module 03
+> (authentication and user management) and Module 04 (roles and permissions) are implemented. Schema registration,
+> the external API integration, the LLM, SQL generation, the SQL security guard and the chat interface arrive in
+> later modules. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Architecture overview
 
@@ -95,6 +95,8 @@ Then edit `.env`:
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `opspilot` / — / `opspilot` | Docker Compose database credentials |
 | `VITE_API_BASE_URL` | `http://localhost:8000` | Backend URL as seen from the browser (built into the frontend) |
 | `VITE_API_TIMEOUT_MS` | `10000` | Frontend request timeout |
+| `AUTHORIZATION_POLICY_MAX_DEPTH` / `AUTHORIZATION_POLICY_MAX_CONDITIONS` | `4` / `50` | Deepest AND/OR nesting and most conditions in one permission policy |
+| `AUTHORIZATION_CACHE_SIZE` | `1024` | Users whose resolved permissions are cached per backend process (checked against a database revision on every request; `0` disables) |
 
 Invalid configuration stops the backend at startup with a message naming the setting. Error messages never
 echo the values themselves, because they may be secrets.
@@ -191,8 +193,50 @@ Administrators see **Users** in the top navigation:
   (a one-time link, valid 30 minutes, shown once: copy it to the user; their sessions end when they set the new
   password) and **Delete** (soft delete: the account disappears from the list and cannot sign in; audit history is
   kept and the email can be reused).
-- The installation administrator account cannot be deactivated or deleted from the web app, and nobody can grant
-  administrator rights through it. Dynamic roles and permissions arrive in Module 04.
+- The installation administrator account cannot be deactivated or deleted from the web app.
+- With `access:review`, the user page also shows the person's **roles**, **direct permissions** and **effective
+  access**; with `access:assign` you can assign or remove roles and grant or deny individual permissions, each with an
+  optional expiry date (see below).
+
+## Roles and permissions
+
+Access is configured in the web app, never in code. Nothing is hard-coded about job titles: you decide what a
+"Regional Manager" or "Finance Analyst" may see.
+
+1. **Create permissions** (**Permissions → Create permission**). Give it a name and a key such as
+   `sales.karnataka.view`, choose the resource (`database_data` for tables, columns and rows; any other name, such as
+   `executive_reports`, for features) and the action (`view`, `export`, …). Then build the rule with the form:
+   - *Allow*: the tables, the columns of each (or all columns), whether individual rows and/or only aggregates may be
+     read, **row restrictions** (for example *region equals Karnataka*; add a group to allow any of several values),
+     and whether results may be exported or the generated SQL shown.
+   - *Deny*: a restriction that always wins over allows: deny the action entirely, or deny tables, columns
+     (`table.column`), matching rows, exporting or SQL viewing.
+
+   **Review** checks the rule on the server, shows it in plain language and as read-only JSON, and only then saves.
+   Policy reference: [docs/PERMISSION_POLICY.md](docs/PERMISSION_POLICY.md).
+2. **Create roles** (**Roles → Create role**) and open a role to **Edit permissions**: tick the permissions, review the
+   additions and removals, and save. Users holding the role get the change on their next request.
+3. **Assign roles to users** on each user's page, optionally until a date. Use a direct **Deny** to take one
+   permission away from one person even though a role grants it.
+
+Rules worth knowing:
+
+- Without a matching permission, everything is denied. A deny always wins over an allow. Expired or removed
+  assignments and inactive roles or permissions stop counting immediately.
+- The built-in **Administrator** role (marked *System*) manages users, roles, permissions and access. It cannot be
+  edited or deleted, and its management permissions cannot be given to any other role. Read-only administration
+  (`users:read`, `roles:read`, `permissions:read`, `settings:read`, `access:review`) can be delegated through any role.
+- Administrators do **not** automatically see business data; give them a data permission like anyone else.
+- Nobody (except the installation administrator) can change their own access, and the last administrator cannot be
+  removed.
+- Every change is recorded in an audit trail, visible as **History** on role and permission pages.
+- If the built-in permissions or Administrator role were changed directly in the database, restore them with:
+
+  ```bash
+  docker compose exec backend python -m app.cli sync-permissions
+  ```
+
+Design details: [ARCHITECTURE.md §5](ARCHITECTURE.md#5-roles-and-permissions-module-04).
 
 ## Application database
 

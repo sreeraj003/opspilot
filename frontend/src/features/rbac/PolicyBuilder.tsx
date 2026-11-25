@@ -1,7 +1,7 @@
 import { FolderPlus, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
-import { Checkbox, INPUT_CLASSES, SELECT_CLASSES, TagInput } from "@/features/rbac/components";
+import { Checkbox, FIELD_CLASSES, SELECT_CLASSES, TagInput } from "@/features/rbac/components";
 import {
   DATA_RESOURCE_TYPE,
   MAX_DEPTH,
@@ -31,7 +31,7 @@ function ConditionEditor({ node, onChange, onRemove, label }: { node: ConditionD
         placeholder="column"
         value={node.column}
         onChange={(event) => onChange({ ...node, column: event.target.value })}
-        className={`${INPUT_CLASSES} w-40 font-mono`}
+        className={`${FIELD_CLASSES} w-40 font-mono`}
       />
       <select
         aria-label={`${label} value type`}
@@ -75,7 +75,7 @@ function ConditionEditor({ node, onChange, onRemove, label }: { node: ConditionD
             placeholder={node.operator === "in" || node.operator === "not_in" ? "values, separated by commas" : node.operator === "between" ? "from" : "value"}
             value={node.value}
             onChange={(event) => onChange({ ...node, value: event.target.value })}
-            className={`${INPUT_CLASSES} w-48`}
+            className={`${FIELD_CLASSES} w-48`}
           />
         ))}
       {node.operator === "between" && (
@@ -85,7 +85,7 @@ function ConditionEditor({ node, onChange, onRemove, label }: { node: ConditionD
           placeholder="to"
           value={node.value2}
           onChange={(event) => onChange({ ...node, value2: event.target.value })}
-          className={`${INPUT_CLASSES} w-40`}
+          className={`${FIELD_CLASSES} w-40`}
         />
       )}
       <Button variant="ghost" onClick={onRemove} aria-label={`Remove ${label.toLowerCase()}`}>

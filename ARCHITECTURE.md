@@ -41,7 +41,7 @@ The API client takes its bearer token and its refresh-on-401 behaviour from the 
 ## 3. Application database (Module 02)
 
 OpsPilot's PostgreSQL database stores **OpsPilot's own data**, never the company's business data. The company's
-database is reached only through its GET SQL API (section 5); OpsPilot never opens a connection to it.
+database is reached only through its GET SQL API (section 6); OpsPilot never opens a connection to it.
 
 - Implemented: `application_settings` (non-secret installation settings); `users`, `user_sessions`,
   `retired_refresh_tokens`, `password_reset_tokens`, `auth_events` (Module 03, section 4).
@@ -345,18 +345,18 @@ uvicorn `--forwarded-allow-ips`, otherwise all users share the proxy's IP budget
   They are not a security boundary: every endpoint enforces authentication and permissions on the server.
 - Tokens are never written to `localStorage`, `sessionStorage` or readable cookies, and never logged.
 
-### 4.8 Authorization and the Module 04 extension point
+### 4.8 Authorization entry point
 
 Routes declare what they need: `Depends(require_permission(Permission.USERS_MANAGE))`. Nothing else checks
 `is_superuser`. The decision is made by the `AuthorizationPolicy` returned by `get_authorization_policy()`:
 
-- Module 03 ships `BootstrapAuthorizationPolicy`: an active, non-deleted user with `is_superuser` holds every
-  permission (`users:read`, `users:manage`, `settings:read`, `settings:manage`); every other user holds none of
-  them. Ordinary users can use their own account endpoints (`/auth/me`, change password, logout).
-- Module 04 provides a policy backed by dynamic roles and permissions and overrides `get_authorization_policy`.
-  Permission names and routes stay the same. `is_superuser` then means "installation owner created by bootstrap"
-  (a break-glass flag the new policy may honour), not a role definition.
-- The settings API (Module 02) now requires `settings:read` / `settings:manage`.
+- With a database configured, this is `EngineAuthorizationPolicy` (Module 04, section 5): permissions come from
+  roles and permission assignments stored in the database.
+- Without a database (Module 01 mode), `BootstrapAuthorizationPolicy` remains: the installation administrator
+  (`is_superuser`) holds every system permission and other users hold none.
+- `is_superuser` means "installation owner created by bootstrap", a break-glass account that always holds the
+  system permissions (never data access). It is not a role.
+- The settings API (Module 02) requires `settings:read` / `settings:manage`.
 
 ### 4.9 Account rules
 
@@ -384,7 +384,121 @@ action was committed) and a structured log line. Recorded: `login_succeeded`, `l
 secret-looking keys; attempted email addresses of unknown accounts are not stored. There is no API to read events
 yet (Module 16).
 
-## 5. External GET SQL API integration (planned)
+## 5. Roles and permissions (Module 04)
+
+### 5.1 Overview
+
+Access is defined in the database, never in code: administrators create roles and permissions at runtime, assign
+permissions to roles, and assign roles (or individual permissions) to users. There are no hard-coded business roles
+such as "CEO" or "Manager". Everything is single-installation; there is no tenant column.
+
+```
+app/authorization/policy.py        policy format: validation and normalisation (pure, no I/O)
+app/authorization/engine.py        AuthorizationEngine: resolve grants, evaluate requests, AI context
+app/authorization/cache.py         per-process LRU of resolved grants, validated by a revision number
+app/authorization/system_catalog.py  built-in permissions and the Administrator role (idempotent repair)
+app/services/rbac_service.py       every management rule, audit event and revision bump
+app/repositories/rbac_repository.py  queries (bulk grant loading, catalog search, counts)
+app/api/routes/roles.py, permissions.py, access.py
+```
+
+### 5.2 Data model
+
+| Table | Purpose |
+| --- | --- |
+| `roles` | `key` (immutable), `name`, `description`, `is_system`, `is_active`, soft delete (`deleted_at`) |
+| `permissions` | `key`, `name`, `resource_type`, `action`, `policy_definition` (JSONB, normalized), `is_system`, `is_active`, `expires_at`, soft delete |
+| `role_permissions` | role ↔ permission, with `assigned_by`, `revoked_at`, `revoked_by` (history is kept) |
+| `user_roles` | user ↔ role, with `expires_at` and revocation history |
+| `user_permissions` | direct grant or deny (`assignment_type`), optional narrowing `policy_override`, `expires_at`, revocation history |
+| `rbac_audit_events` | who changed what, with before/after details |
+| `authorization_state` | a single row holding the policy `revision` |
+
+Keys are unique among live rows (partial unique indexes on `deleted_at IS NULL`), so a deleted role's key can be
+reused; assignments are unique among unrevoked rows. Migration `0003` creates the tables and seeds the ten system
+permissions, the **Administrator** system role holding all of them, and revision 1.
+
+### 5.3 System permissions and the Administrator role
+
+| Delegable (any role may hold them) | Administrator only |
+| --- | --- |
+| `users:read`, `settings:read`, `roles:read`, `permissions:read`, `access:review` | `users:manage`, `settings:manage`, `roles:manage`, `permissions:manage`, `access:assign` |
+
+Administrator-only permissions count only through the built-in Administrator role (or the installation superuser);
+they cannot be added to another role or granted directly, so nobody can build a "half administrator" that escalates
+itself. System roles and permissions cannot be renamed, deactivated, deleted or have their permissions changed.
+`python -m app.cli sync-permissions` restores them if a database was edited by hand.
+
+Administrators get **no implicit data access**: reading business data always needs an explicit `database_data`
+permission.
+
+### 5.4 Policies and evaluation
+
+Permission policies are structured JSON (format and examples: [docs/PERMISSION_POLICY.md](docs/PERMISSION_POLICY.md)).
+`validate_policy` checks shape, identifiers, operators per value type, nesting depth and condition count, column
+references and contradictions, and stores the normalized form. Schema-aware checks go through a `SchemaCatalog`
+protocol; until schema registration exists, `UnknownSchemaCatalog` skips them.
+
+`AuthorizationEngine` resolves a user's grants with three queries (roles, role grants, direct grants) for any
+number of users, then evaluates in memory: inactive user → deny; no grant → deny; expired, revoked or inactive grants
+ignored; direct deny removes a permission key; allow grants combined per table; deny policies applied last and
+always win. The decision (`AuthorizationDecision`) is structured data: tables, columns, denied columns, operations,
+row filters as condition trees, export and SQL-view flags. It never contains SQL.
+
+### 5.5 Caching and invalidation
+
+Every RBAC change, and every user activation, deactivation or deletion, increments `authorization_state.revision`
+in the same transaction. `AuthorizationCache` stores resolved grants per user keyed by revision; each check reads the
+current revision (one primary-key lookup), so a change made by any process is seen by the next request. Expiry is
+evaluated at decision time, not at cache time. The cache is bounded (`AUTHORIZATION_CACHE_SIZE`, 0 disables it).
+
+### 5.6 Management rules
+
+- Every endpoint requires a system permission: `roles:read`/`roles:manage`, `permissions:read`/`permissions:manage`,
+  `access:review` (read a user's access) and `access:assign` (change it).
+- Nobody except the installation superuser can change their own roles or permissions (no self-assignment).
+- The last active administrator cannot lose the Administrator role (defence in depth: the installation superuser
+  also always counts as an administrator).
+- A role still assigned to users cannot be deleted; deactivate it or remove it from the users first.
+- Every change writes an `rbac_audit_events` row in the same transaction (`role_created`, `role_updated`,
+  `role_activated`, `role_deactivated`, `role_deleted`, `permission_*`, `role_permission_assigned`/`revoked`,
+  `user_role_assigned`/`revoked`, `user_permission_assigned`/`revoked`).
+
+### 5.7 API
+
+| Method and path | Permission |
+| --- | --- |
+| `GET/POST /roles`, `GET/PATCH/DELETE /roles/{id}` | `roles:read` / `roles:manage` |
+| `POST/PUT /roles/{id}/permissions`, `DELETE /roles/{id}/permissions/{permission_id}` | `roles:manage` |
+| `GET/POST /permissions`, `GET/PATCH/DELETE /permissions/{id}` | `permissions:read` / `permissions:manage` |
+| `POST /permissions/validate-policy` | `permissions:manage` |
+| `GET /users/{id}/roles`, `GET /users/{id}/permissions`, `GET /users/{id}/effective-permissions` | `access:review` |
+| `POST/DELETE /users/{id}/roles[/{role_id}]`, `POST/DELETE /users/{id}/permissions[/{permission_id}]` | `access:assign` |
+| `GET /authorization/me`, `GET /authorization/me/ai-context` | signed in (own data only) |
+| `POST /authorization/check` | signed in for yourself; `access:review` for another user (diagnostic: marked `diagnostic: true`) |
+
+### 5.8 AI authorization context
+
+`AuthorizationEngine.ai_authorization_context(user)` returns what a later AI module may use to plan queries: roles,
+permission keys, allowed resources and actions, per-table columns, operations and row filters, and export/SQL-view
+flags, stamped with the policy revision and `is_authorization_token: false`. It excludes system permissions,
+credentials, tokens, session data and email addresses. It is **context, not authorization**: every generated query
+must still be checked by the engine (and later by the SQL security pipeline) at execution time.
+
+### 5.9 Frontend
+
+`PermissionsProvider` loads `GET /authorization/me` (keyed by user id, refetched on focus, every 5 minutes and after
+any access change made in the app) and exposes `usePermissions()` with `hasPermission`, `canAccessResource` and
+`effectivePermissions`. Until it answers, the permissions from the sign-in response are used. Navigation, routes
+(`RequirePermission`) and buttons use it only to decide what to show; the server enforces every request.
+
+Pages: **Roles** (list, search, filter, create, activate/deactivate, delete), **Role** (details, permission editor
+with a review of additions and removals before saving, users, history), **Permissions** (list, search, filter by
+resource and status), **Permission** (form-based policy builder with nested AND/OR groups, a review step validated by
+the server with a plain-language summary and read-only JSON), and an access section on each **User** page (roles,
+direct grants and denials with optional expiry, effective access).
+
+## 6. External GET SQL API integration (planned)
 
 OpsPilot does not connect to the company's business database. The company already has a backend endpoint that
 accepts SQL as a query parameter and returns results:
@@ -402,7 +516,7 @@ OpsPilot will:
 
 The company keeps full control: its API decides which database user runs the query and can add its own limits.
 
-## 6. Planned modular backend architecture
+## 7. Planned modular backend architecture
 
 The backend is a modular monolith. Each business module adds its own routes, schemas, services and models in
 the existing layers:
@@ -424,7 +538,7 @@ Planned modules (subject to the project owner's sequencing):
 | Module | Adds |
 | --- | --- |
 | Authentication and users | **Implemented (Module 03, section 4)** |
-| Roles and permissions | Which users may query which registered tables and columns |
+| Roles and permissions | **Implemented (Module 04, section 5)** |
 | Schema registry | Registering the company's table and column metadata used for SQL generation |
 | External API integration | Configured client for the company's GET SQL endpoint |
 | LLM integration | NVIDIA-hosted model client (`NVIDIA_BASE_URL`, `NVIDIA_MODEL`, `NVIDIA_API_KEY`) |
@@ -435,7 +549,7 @@ Planned modules (subject to the project owner's sequencing):
 Rules for every module: route handlers stay thin, logic lives in services, persistence lives in repositories,
 dependencies are injected through `app/api/deps.py`, and no module imports another module's routes.
 
-## 7. Planned SQL security execution pipeline
+## 8. Planned SQL security execution pipeline
 
 Generated SQL is untrusted input. Before anything reaches the company API it passes a pipeline that is
 independent of the LLM and cannot be skipped:

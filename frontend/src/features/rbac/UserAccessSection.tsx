@@ -8,7 +8,7 @@ import { ConfirmDialog } from "@/components/ui/Dialog";
 import { Spinner } from "@/components/ui/Spinner";
 import { useAuth } from "@/features/auth/authContext";
 import { usePermissions } from "@/features/permissions/permissionsContext";
-import { Card, INPUT_CLASSES, SELECT_CLASSES } from "@/features/rbac/components";
+import { Card, FIELD_CLASSES, SELECT_CLASSES } from "@/features/rbac/components";
 import {
   useAssignUserPermission,
   useAssignUserRole,
@@ -54,7 +54,7 @@ function AssignRoleForm({ userId, assigned }: { userId: string; assigned: Set<st
             </option>
           ))}
         </select>
-        <input type="date" aria-label="Role expires on (optional)" value={expires} onChange={(event) => setExpires(event.target.value)} className={`${INPUT_CLASSES} w-44`} />
+        <input type="date" aria-label="Role expires on (optional)" value={expires} onChange={(event) => setExpires(event.target.value)} className={`${FIELD_CLASSES} w-44`} />
         <Button type="submit" disabled={!roleId} loading={assign.isPending}>
           Assign role
         </Button>
@@ -100,7 +100,7 @@ function AssignPermissionForm({ userId, assigned }: { userId: string; assigned: 
           <option value="grant">Grant</option>
           <option value="deny">Deny</option>
         </select>
-        <input type="date" aria-label="Permission expires on (optional)" value={expires} onChange={(event) => setExpires(event.target.value)} className={`${INPUT_CLASSES} w-44`} />
+        <input type="date" aria-label="Permission expires on (optional)" value={expires} onChange={(event) => setExpires(event.target.value)} className={`${FIELD_CLASSES} w-44`} />
         <Button type="submit" disabled={!permissionId} loading={assign.isPending}>
           Add
         </Button>
@@ -147,7 +147,7 @@ export function EffectivePermissionsView({ effective }: { effective: EffectivePe
                 <p className="font-mono text-xs font-medium text-stone-900">
                   {table.table} · {table.action}
                 </p>
-                <p className="mt-1 text-xs text-stone-600">Columns: {table.columns.includes("*") ? "all" : table.columns.join(", ")}</p>
+                <p className="mt-1 text-xs text-stone-600">Columns: {table.columns.some((c) => c === "*" || c.endsWith(".*")) ? "all" : table.columns.join(", ")}</p>
                 {table.denied_columns.length > 0 && <p className="text-xs text-stone-600">Hidden columns: {table.denied_columns.join(", ")}</p>}
                 <p className="text-xs text-stone-600">Operations: {table.operations.join(", ")}</p>
                 <p className="text-xs text-stone-600">Rows: {table.row_filter ? describeNode(table.row_filter) : "all"}</p>
