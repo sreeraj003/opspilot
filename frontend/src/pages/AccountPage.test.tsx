@@ -18,7 +18,7 @@ describe("AccountPage", () => {
     await user.click(screen.getByRole("button", { name: "Change password" }));
 
     expect(await screen.findByText(/Password changed/)).toBeInTheDocument();
-    const call = fetchImpl.mock.calls[0]!;
+    const call = fetchImpl.mock.calls.find(([url]) => String(url).endsWith("/api/v1/auth/change-password"))!;
     expect(call[1]?.credentials).toBe("include");
     expect(JSON.parse(String(call[1]?.body))).toEqual({
       current_password: "old passphrase here",

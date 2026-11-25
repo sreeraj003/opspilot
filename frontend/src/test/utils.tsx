@@ -38,6 +38,9 @@ export function routeFetch(responses: Record<string, Handler>) {
       const [keyMethod, keyPath] = key.includes(" ") ? key.split(" ") : [undefined, key];
       return (keyMethod === undefined || keyMethod === method) && path.endsWith(keyPath!);
     });
+    // The permissions provider asks for /authorization/me on every signed-in render. Tests that
+    // do not answer it keep using the permissions from the sign-in response.
+    if (!match && method === "GET" && path.endsWith("/api/v1/authorization/me")) return new Promise<Response>(() => {});
     if (!match) throw new Error(`Unexpected request: ${method} ${url}`);
     return responses[match]!(init, url);
   });
@@ -63,7 +66,18 @@ export function makeUser(overrides: Partial<User> = {}): User {
   };
 }
 
-export const ADMIN_PERMISSIONS: Permission[] = ["settings:manage", "settings:read", "users:manage", "users:read"];
+export const ADMIN_PERMISSIONS: Permission[] = [
+  "access:assign",
+  "access:review",
+  "permissions:manage",
+  "permissions:read",
+  "roles:manage",
+  "roles:read",
+  "settings:manage",
+  "settings:read",
+  "users:manage",
+  "users:read",
+];
 
 export function makeCurrentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {
   return { ...makeUser(), permissions: [], ...overrides };

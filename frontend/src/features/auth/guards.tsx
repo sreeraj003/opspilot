@@ -3,6 +3,7 @@ import { Navigate, Outlet, useLocation } from "react-router";
 
 import { FullPageSpinner } from "@/components/ui/Spinner";
 import { useAuth } from "@/features/auth/authContext";
+import { usePermissions } from "@/features/permissions/permissionsContext";
 import type { Permission } from "@/types/auth";
 
 export interface LoginRedirectState {
@@ -26,7 +27,7 @@ export function RequireAuth() {
 
 /** Child routes for users the server says hold ``permission``; others see a 403 page. */
 export function RequirePermission({ permission }: { permission: Permission }) {
-  const { hasPermission } = useAuth();
+  const { hasPermission } = usePermissions();
   return hasPermission(permission) ? <Outlet /> : <ForbiddenPage />;
 }
 

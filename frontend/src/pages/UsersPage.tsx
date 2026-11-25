@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { Spinner } from "@/components/ui/Spinner";
 import { useAuth } from "@/features/auth/authContext";
+import { usePermissions } from "@/features/permissions/permissionsContext";
 import { CreateUserDialog } from "@/features/users/CreateUserDialog";
 import { useSetUserActive, useUserList } from "@/features/users/hooks";
 import { UserStatusBadge } from "@/features/users/UserStatusBadge";
@@ -47,7 +48,8 @@ function useDebounced<T>(value: T, delayMs: number): T {
 
 export function UsersPage() {
   useDocumentTitle("Users");
-  const { user: currentUser, hasPermission } = useAuth();
+  const { user: currentUser } = useAuth();
+  const { hasPermission } = usePermissions();
   const canManage = hasPermission("users:manage");
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
