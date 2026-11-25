@@ -77,7 +77,8 @@ export function DataTable<T>({
     body = <EmptyState {...empty} />;
   } else {
     body = (
-      <div className="overflow-x-auto">
+      // "relative" contains sr-only text (absolutely positioned) so it cannot widen the page.
+      <div className="relative overflow-x-auto">
         <Table>
           <caption className="sr-only">{caption}</caption>
           <TableHead>
@@ -109,7 +110,7 @@ export function DataTable<T>({
   }
   return (
     <div className="space-y-4">
-      <div className="overflow-hidden rounded-card border border-line bg-surface shadow-card" aria-busy={loading || undefined}>
+      <div className="relative overflow-hidden rounded-card border border-line bg-surface shadow-card" aria-busy={loading || undefined}>
         {body}
       </div>
       {footer}

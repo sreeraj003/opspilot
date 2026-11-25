@@ -145,7 +145,7 @@ export function RolesPage() {
       align: "right",
       cell: (role) => (
         <div className="flex justify-end gap-1">
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/admin/roles/${role.id}`)} aria-label={`View ${role.name}`}>
+          <Button variant="ghost" size="sm" className="hidden sm:inline-flex" onClick={() => navigate(`/admin/roles/${role.id}`)} aria-label={`View ${role.name}`}>
             View
           </Button>
           {canManage && !role.is_system && (

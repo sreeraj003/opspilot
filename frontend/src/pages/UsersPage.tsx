@@ -106,7 +106,7 @@ export function UsersPage() {
         const protectedAccount = isSelf || item.is_superuser;
         return (
           <div className="flex justify-end gap-1">
-            <Button variant="ghost" size="sm" onClick={() => navigate(`/admin/users/${item.id}`)} aria-label={`View ${item.full_name}`}>
+            <Button variant="ghost" size="sm" className="hidden sm:inline-flex" onClick={() => navigate(`/admin/users/${item.id}`)} aria-label={`View ${item.full_name}`}>
               View
             </Button>
             {canManage && !protectedAccount && item.is_active && (

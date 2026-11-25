@@ -27,17 +27,17 @@ export function FormField({ label, description, error, required = false, hideLab
   const describedBy = [errorId, descriptionId].filter(Boolean).join(" ") || undefined;
   return (
     <div className={className}>
-      {/* The required mark is CSS-generated so it is not part of the label text; the control gets aria-required. */}
-      <label
-        htmlFor={controlId}
-        className={cn(
-          "mb-1.5 block text-sm font-medium text-fg-secondary",
-          required && "after:ml-0.5 after:text-danger-text after:content-['*']",
-          hideLabel && "sr-only",
+      {/* The required mark sits outside the <label> so it is not part of the accessible name; the control gets aria-required. */}
+      <div className={cn("mb-1.5 flex items-baseline gap-0.5", hideLabel && "sr-only")}>
+        <label htmlFor={controlId} className="text-sm font-medium text-fg-secondary">
+          {label}
+        </label>
+        {required && (
+          <span aria-hidden="true" className="text-sm text-danger-text">
+            *
+          </span>
         )}
-      >
-        {label}
-      </label>
+      </div>
       <FormFieldContext.Provider value={{ id: controlId, describedBy, invalid: Boolean(error), required }}>
         {children}
       </FormFieldContext.Provider>

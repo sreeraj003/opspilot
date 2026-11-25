@@ -70,7 +70,7 @@ export function SidebarContent({ collapsed = false, onNavigate, onSignOut, onTog
               (collapsed ? (
                 <div aria-hidden="true" className="mx-auto mb-2 h-px w-6 bg-line" />
               ) : (
-                <p className="mb-1.5 px-2.5 text-2xs font-semibold tracking-wider text-fg-subtle uppercase">{section.label}</p>
+                <p className="mb-1.5 px-2.5 text-2xs font-semibold tracking-wider text-fg-muted uppercase">{section.label}</p>
               ))}
             <ul className="space-y-0.5" aria-label={collapsed ? section.label : undefined}>
               {section.items.map((item) => (

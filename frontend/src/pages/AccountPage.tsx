@@ -8,7 +8,7 @@ import { z } from "zod";
 import { Alert } from "@/components/ui/Alert";
 import { Avatar } from "@/components/ui/Avatar";
 import { Card } from "@/components/ui/Card";
-import { Divider, PageHeader, ResponsiveContainer } from "@/components/ui/Layout";
+import { Divider, PageHeader } from "@/components/ui/Layout";
 import { Switch } from "@/components/ui/Switch";
 import { Tabs } from "@/components/ui/Tabs";
 import { Button } from "@/components/ui/Button";
@@ -149,7 +149,7 @@ export function AccountPage() {
   );
 
   return (
-    <ResponsiveContainer width="narrow" className="space-y-section">
+    <div className="max-w-3xl space-y-section">
       <PageHeader title="Your account" description="Profile details, sign-in security and appearance." />
       <Tabs
         label="Account sections"
@@ -181,6 +181,6 @@ export function AccountPage() {
           }
         }}
       />
-    </ResponsiveContainer>
+    </div>
   );
 }
