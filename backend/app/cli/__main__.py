@@ -23,6 +23,7 @@ import sys
 from app.core.config import get_settings
 from app.core.emails import InvalidEmailError, normalize_email
 from app.database.session import Database
+from app.repositories.user_repository import UserRepository
 from app.services.bootstrap_service import (
     AdminCredentials,
     BootstrapError,
@@ -104,6 +105,14 @@ async def _run(args: argparse.Namespace) -> int:
     passwords = PasswordService()
     try:
         if args.command == "create-admin":
+            # Checked before prompting, so nobody types a password for nothing.
+            # create_initial_admin checks again under a lock.
+            async with database.session() as session:
+                if await UserRepository(session).superuser_exists():
+                    raise BootstrapError(
+                        "An installation administrator already exists. Bootstrap runs only once; "
+                        "use 'python -m app.cli reset-password' to recover access."
+                    )
             credentials = _credentials(args)
             async with database.session() as session:
                 await create_initial_admin(session, passwords, credentials)
@@ -121,6 +130,9 @@ async def _run(args: argparse.Namespace) -> int:
     except (BootstrapError, PasswordPolicyError, InvalidEmailError) as exc:
         print(f"Refused: {exc}", file=sys.stderr)
         return EXIT_REFUSED
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled. Nothing was changed.", file=sys.stderr)
+        return EXIT_USAGE
     finally:
         await database.dispose()
 

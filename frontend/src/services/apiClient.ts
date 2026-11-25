@@ -26,10 +26,25 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** HTTP statuses that resolve with the parsed body instead of throwing (e.g. 503 from a health check). */
   acceptStatuses?: readonly number[];
+  /** Extra headers for this request only. */
+  headers?: Record<string, string>;
+  /** Send and accept cookies cross-origin. Only the auth endpoints that use the refresh cookie need it. */
+  withCredentials?: boolean;
+  /**
+   * Skip the authentication layer: no bearer token, and no refresh-and-retry on 401.
+   * Used by the auth endpoints themselves.
+   */
+  anonymous?: boolean;
 }
 
-/** Supplies extra headers per request. Reserved for the authentication module (e.g. a bearer token). */
+/** Supplies extra headers per request (the bearer token, from the authentication module). */
 export type HeadersProvider = () => Record<string, string>;
+
+/**
+ * Called when an authenticated request answers 401. Resolves true when a new
+ * access token was obtained (the request is then retried once), false otherwise.
+ */
+export type UnauthorizedHandler = () => Promise<boolean>;
 
 export interface ApiClientOptions {
   baseUrl: string;
@@ -48,7 +63,8 @@ export class ApiClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
-  private readonly headersProvider?: HeadersProvider;
+  private headersProvider?: HeadersProvider;
+  private unauthorizedHandler?: UnauthorizedHandler;
 
   constructor({ baseUrl, timeoutMs, fetchImpl, headersProvider }: ApiClientOptions) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
@@ -57,12 +73,48 @@ export class ApiClient {
     this.headersProvider = headersProvider;
   }
 
+  /** Connects the authentication layer: bearer headers and refresh-on-401. */
+  useAuthentication(headersProvider: HeadersProvider, unauthorizedHandler: UnauthorizedHandler): void {
+    this.headersProvider = headersProvider;
+    this.unauthorizedHandler = unauthorizedHandler;
+  }
+
   get<T>(path: string, options: Omit<RequestOptions, "method" | "body"> = {}): Promise<T> {
     return this.request<T>(path, { ...options, method: "GET" });
   }
 
+  post<T>(path: string, body?: unknown, options: Omit<RequestOptions, "method" | "body"> = {}): Promise<T> {
+    return this.request<T>(path, { ...options, method: "POST", body });
+  }
+
+  patch<T>(path: string, body?: unknown, options: Omit<RequestOptions, "method" | "body"> = {}): Promise<T> {
+    return this.request<T>(path, { ...options, method: "PATCH", body });
+  }
+
+  delete<T>(path: string, options: Omit<RequestOptions, "method" | "body"> = {}): Promise<T> {
+    return this.request<T>(path, { ...options, method: "DELETE" });
+  }
+
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const { method = "GET", body, signal, acceptStatuses = [] } = options;
+    try {
+      return await this.send<T>(path, options);
+    } catch (error) {
+      // One refresh-and-retry per request: a second 401 is final, so this can never loop.
+      if (
+        error instanceof ApiError &&
+        error.status === 401 &&
+        !options.anonymous &&
+        this.unauthorizedHandler &&
+        (await this.unauthorizedHandler())
+      ) {
+        return this.send<T>(path, options);
+      }
+      throw error;
+    }
+  }
+
+  private async send<T>(path: string, options: RequestOptions): Promise<T> {
+    const { method = "GET", body, signal, acceptStatuses = [], headers = {}, withCredentials, anonymous } = options;
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
     const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
@@ -73,10 +125,12 @@ export class ApiClient {
         headers: {
           Accept: "application/json",
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-          ...this.headersProvider?.(),
+          ...(anonymous ? {} : this.headersProvider?.()),
+          ...headers,
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: combinedSignal,
+        credentials: withCredentials ? "include" : "same-origin",
       });
     } catch (error) {
       if (timeoutSignal.aborted) {
