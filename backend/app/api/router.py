@@ -1,0 +1,9 @@
+"""Aggregates every route module into one router included by the application."""
+
+from fastapi import APIRouter
+
+from app.api.routes import health, system
+
+api_router = APIRouter()
+api_router.include_router(system.router)
+api_router.include_router(health.router)

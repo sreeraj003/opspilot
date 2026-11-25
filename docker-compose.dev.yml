@@ -1,0 +1,19 @@
+# Local development override: publishes PostgreSQL on 127.0.0.1 only, so a
+# backend running directly on your machine (uvicorn --reload) can reach it.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
+#
+# Do not use this file in production.
+
+services:
+  db:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - data
+      - host_access
+
+networks:
+  # The base "data" network is internal and cannot publish ports, so the
+  # database also joins a regular network for the loopback-only port.
+  host_access:
