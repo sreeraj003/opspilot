@@ -2,14 +2,97 @@
 
 ## Current module
 
-**Module 04: Dynamic role-based access control and permission engine.** Implemented and verified on 2026-11-25.
-Awaiting the project owner's review. Module 05 has not been started.
+**Module 05: Frontend foundation and design system.** Implemented and verified on 2026-11-25. Awaiting the project
+owner's review. Module 06 has not been started.
 
-Single installation, single organisation: no tenant model. Modules 01 to 03 keep their behaviour; Module 03's
-bootstrap authorization is replaced by the database-backed engine whenever a database is configured. Earlier records
-are kept below.
+Single installation, single organisation: no tenant model. Modules 01 to 04 keep their behaviour: the frontend was
+consolidated, not rebuilt, and no backend code changed. Earlier records are kept below.
 
-## Module 04: what was implemented
+## Module 05: what was implemented
+
+Reference: [docs/FRONTEND_DESIGN_SYSTEM.md](docs/FRONTEND_DESIGN_SYSTEM.md) and ARCHITECTURE.md section 6.
+
+- **Design tokens** (`src/styles/tokens.css`, mirrored in `src/design/tokens.ts`): semantic colours (neutrals,
+  lines, text, a restrained indigo accent, success/warning/danger/info), typography, font sizes and weights, spacing
+  names, radius, shadows, breakpoints, motion and z-index layers. Tailwind's default palette is removed so only
+  tokens can be used; every existing page was migrated off raw `stone-*`/`rose-*`/`white` classes.
+- **Light and dark themes** with a "system" option (`ThemeProvider`, `ThemeToggle`, Appearance tab), applied before
+  first paint by `public/theme-init.js`. Reduced-motion support is global.
+- **Component library** (`src/components/ui/`): Button (5 variants, 5 sizes, loading) and ButtonLink, Input,
+  Textarea, Select, PasswordInput, SearchInput, Checkbox, Switch, FormField (+ TextField, PasswordField,
+  TextareaField), Card, PageHeader, SectionHeader, Divider, Stack, ResponsiveContainer, Breadcrumbs, Tabs,
+  DropdownMenu, Badge, StatusIndicator, Alert, Toast, Tooltip, LoadingSpinner/Spinner, Skeleton, EmptyState,
+  ErrorState, Dialog (Modal) and ConfirmDialog, Drawer, Table primitives, DataTable, Pagination, Avatar. Earlier
+  duplicates (StatusBadge, per-page tables, empty states, pagination and search boxes, RBAC field classes) now use
+  these.
+- **Application shell** (`layouts/AppLayout` + `layouts/shell/`): branded sidebar with sections, active indicator,
+  collapse to an icon rail (remembered), user profile and sign-out; mobile navigation drawer; sticky top bar with
+  page title / breadcrumbs, theme picker and account menu; skip link; content inside error and loading boundaries.
+  No notification area (nothing produces notifications yet).
+- **Layouts**: public (`/reset-password`), authentication (`/login`, `/forgot-password`, with a product panel on
+  large screens), application, and protected administration (`/admin/*`, with `/admin` sending users to the first
+  administration page they may open).
+- **Navigation registry** (`src/app/navigation.ts`): sections and items with permission keys; sidebar, drawer and
+  the administration gate are derived from it. Breadcrumbs come from route `handle.crumb`.
+- **Permission-aware UI**: items and actions are shown from `usePermissions()` (Module 04's
+  `/authorization/me`), never from role names.
+- **Authentication pages** polished on the new layouts; a branded session-check screen; sign-out now asks for
+  confirmation (sidebar and account menu). Token handling, refresh, expiry notice and redirect rules are unchanged.
+- **User management**: list with search, status filter, sort, pagination, avatars, responsive columns, skeleton,
+  empty and error states with retry; create dialog; **edit dialog** (new, replaces the inline form);
+  activate/deactivate with confirmation and toasts; security actions; role assignment (Module 04's access section).
+  Roles and permissions lists use the same DataTable.
+- **Your account** page reorganised into Profile, Security and Appearance tabs.
+- **Tooling**: ESLint 9 (typescript-eslint, react-hooks 7, jsx-a11y, react-refresh) added with `npm run lint`;
+  administration pages are lazy-loaded and vendor code is split into chunks (no more chunk-size warning).
+
+### New dependencies (frontend, dev only)
+
+`eslint` 9.39.5, `@eslint/js` 9.39.5, `typescript-eslint` 8.74.0, `eslint-plugin-react-hooks` 7.1.1,
+`eslint-plugin-react-refresh` 0.5.8, `eslint-plugin-jsx-a11y` 6.10.2, `globals` 17.14.0. No runtime dependencies were
+added: React Hook Form and Zod were already present; Recharts is not needed until a module draws charts.
+
+### Commands executed and results (Module 05)
+
+| Command | Result |
+| --- | --- |
+| `npx vitest run` | **151 passed** in 25 files (93 before; 58 added, 4 updated for the new shell) |
+| `npx tsc -b` | OK, no errors |
+| `npm run lint` | OK, 0 errors, 0 warnings |
+| `npm run build` | OK; entry 74 kB (21 kB gzip), react 315 kB (99 kB gzip), data 153 kB (46 kB gzip), admin pages 1 to 19 kB each; no chunk-size warning |
+| Headless Chromium (Playwright) against uvicorn + Vite + PostgreSQL 16 on a fresh database | Signed in as the administrator; home, users, roles, permissions, user detail, edit dialog, create-user validation, deactivate with toast, collapsed sidebar, dark theme, account menu, appearance tab at 1440×900; home, drawer, users, create dialog (bottom sheet), user detail, permission editor, roles and login at 390×844. No console errors other than the expected 401 from the session check before sign-in; no horizontal page overflow (one found and fixed: sr-only table text widened the page on phones). |
+
+Tests added: Button variants, sizes, loading and links; FormField ARIA wiring; password reveal; search clear;
+checkbox and switch; React Hook Form + Zod validation and disabled submission; Dialog focus trap, Escape, backdrop
+and focus return; ConfirmDialog; Drawer; DropdownMenu keyboard and dismissal; Tooltip; Alert, StatusIndicator,
+Badge, Spinner, EmptyState, ErrorState; Toast live regions and timing; DataTable loading/empty/error/rows;
+Pagination; Tabs; Avatar initials; navigation registry filtering; sidebar permission filtering, active item,
+breadcrumbs, navigation, collapse persistence, mobile drawer open/close/Escape; account menu and confirmed sign-out;
+skip link; administration redirect and 403; theme default, switching, persistence and invalid values;
+authentication, public and session-check layouts; user edit dialog and validation; deactivate toast.
+
+Not run in Module 05: backend tests (no backend file changed; Module 04's results stand), a native Windows run,
+Docker Compose, real screen readers, and cross-browser checks beyond Chromium.
+
+### Known limitations
+
+- **The interface only decides what to show.** Hidden buttons and navigation are not authorization; the backend
+  enforces every permission.
+- **Notifications**: no notification area, because nothing produces notifications yet.
+- **Theme preference** is per browser (localStorage), not stored on the account.
+- **Fonts**: the Inter stack falls back to system fonts; no web font is bundled (no external requests).
+- **Tooltips and menus** are positioned with CSS only (no collision detection); they are placed where they fit in
+  the current layouts.
+- **Narrow phones**: wide tables scroll horizontally inside their card; secondary columns are hidden below set
+  breakpoints, and full details are on each record's page.
+- **Accessibility** was checked with automated tests, jsx-a11y lint rules, keyboard walkthroughs in tests and a
+  contrast calculation of the token pairs, not with an external audit or screen-reader testing.
+- The UserAccessSection and policy builder (Module 04) were restyled through the tokens but keep their native
+  inline selects.
+
+## Module 04 record
+
+### What was implemented
 
 Backend
 - **Models** (`app/models/rbac.py`): `roles`, `permissions` (structured JSONB `policy_definition`, `resource_type`,
@@ -500,11 +583,11 @@ Documentation
   base images. The images were therefore built from copies of the committed Dockerfiles with one extra line
   trusting that CA (`PIP_CERT` / `NODE_EXTRA_CA_CERTS`); that line is not committed. On a normal network
   `docker compose up --build` needs no change. Behind a corporate proxy, add its CA to the build.
-- Recharts is listed in the planned stack but intentionally not installed yet (unused in Module 01).
+- Recharts is listed in the planned stack but intentionally not installed yet (no module draws charts yet).
 - PostgreSQL keeps the password from its first start; changing `POSTGRES_PASSWORD` later requires changing it
   in the database or recreating the volume.
 - `VITE_API_BASE_URL` is fixed at build time; changing it requires rebuilding the frontend image.
 
 ## Next module
 
-Module 05, as defined by the project owner. Not started: waiting for review and approval of Module 04.
+Module 06, as defined by the project owner. Not started: waiting for review and approval of Module 05.
