@@ -16,7 +16,18 @@ from typing import Any
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 
 REDACTED = "[REDACTED]"
-_SENSITIVE_KEY_PARTS = ("password", "secret", "token", "api_key", "apikey", "authorization", "database_url", "credential")
+_SENSITIVE_KEY_PARTS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "private_key",
+    "authorization",
+    "database_url",
+    "credential",
+)
 
 # Attributes present on every LogRecord; anything else came from ``extra``.
 _RESERVED_ATTRS = frozenset(vars(logging.LogRecord("", 0, "", 0, "", None, None)).keys()) | {
@@ -39,14 +50,15 @@ def reset_request_id(token: Token[str | None]) -> None:
     _request_id.reset(token)
 
 
-def _is_sensitive(key: str) -> bool:
-    lowered = key.lower()
-    return any(part in lowered for part in _SENSITIVE_KEY_PARTS)
+def is_sensitive_key(key: str) -> bool:
+    """True for names that look like they hold a secret (``db_password``, ``api-key``, ``authToken``)."""
+    normalized = key.lower().replace("-", "_").replace(".", "_")
+    return any(part in normalized for part in _SENSITIVE_KEY_PARTS)
 
 
 def _extra_fields(record: logging.LogRecord) -> dict[str, Any]:
     return {
-        key: REDACTED if _is_sensitive(key) else value
+        key: REDACTED if is_sensitive_key(key) else value
         for key, value in vars(record).items()
         if key not in _RESERVED_ATTRS
     }

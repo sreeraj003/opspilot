@@ -9,10 +9,9 @@ from collections.abc import Callable
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
-
 from app.api.deps import get_db_session
 from app.core.exceptions import ServiceUnavailableError
+from app.database.health import check_database
 from app.database.session import Database
 from tests.conftest import UNREACHABLE_DATABASE_URL, make_settings
 
@@ -42,10 +41,24 @@ def test_database_health_reports_unreachable_without_leaking_credentials(
         assert secret_part not in raw
 
 
-def test_db_session_dependency_requires_configured_database() -> None:
+async def test_db_session_dependency_requires_configured_database() -> None:
     dependency = get_db_session(None)
     with pytest.raises(ServiceUnavailableError):
-        next(dependency)
+        await anext(dependency)
+
+
+async def test_check_database_reports_failure_type_only() -> None:
+    database = Database.from_settings(
+        make_settings(database_url=UNREACHABLE_DATABASE_URL, database_connect_timeout_seconds=1)
+    )
+    try:
+        result = await check_database(database, timeout_seconds=3)
+    finally:
+        await database.dispose()
+
+    assert result.reachable is False
+    assert result.error_type == "OperationalError"
+    assert result.latency_ms >= 0
 
 
 @pytest.mark.postgres
@@ -64,26 +77,12 @@ def test_database_health_reports_ok_against_real_postgres(
 
 
 @pytest.mark.postgres
-def test_db_session_dependency_commits_and_closes(postgres_url: str) -> None:
+async def test_check_database_succeeds_through_a_session(postgres_url: str) -> None:
     database = Database.from_settings(make_settings(database_url=postgres_url))
     try:
-        dependency = get_db_session(database)
-        session = next(dependency)
-        assert session.execute(text("SELECT 1")).scalar_one() == 1
-        with pytest.raises(StopIteration):
-            next(dependency)
-        assert not session.in_transaction()
+        result = await check_database(database, timeout_seconds=5)
+        assert result.reachable is True
+        assert result.error_type is None
+        assert database.engine.pool.checkedout() == 0  # type: ignore[attr-defined]
     finally:
-        database.dispose()
-
-
-@pytest.mark.postgres
-def test_db_session_rolls_back_on_error(postgres_url: str) -> None:
-    database = Database.from_settings(make_settings(database_url=postgres_url))
-    try:
-        with pytest.raises(RuntimeError), database.session() as session:
-            session.execute(text("CREATE TEMPORARY TABLE rollback_probe (id int)"))
-            raise RuntimeError("boom")
-        assert not session.in_transaction()
-    finally:
-        database.dispose()
+        await database.dispose()

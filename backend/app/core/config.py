@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=5, ge=1, le=100)
     database_max_overflow: int = Field(default=10, ge=0, le=100)
     database_connect_timeout_seconds: int = Field(default=5, ge=1, le=60)
+    # Seconds a request waits for a free pooled connection before failing with 503.
+    database_pool_timeout_seconds: int = Field(default=10, ge=1, le=120)
+    # Connections older than this are replaced, so server/firewall idle timeouts never hit a live request.
+    database_pool_recycle_seconds: int = Field(default=1800, ge=60, le=86400)
 
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:5173"])
 

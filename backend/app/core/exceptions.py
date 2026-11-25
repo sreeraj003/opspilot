@@ -16,6 +16,8 @@ from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import get_request_id
@@ -41,6 +43,20 @@ class NotFoundError(AppError):
     status_code = status.HTTP_404_NOT_FOUND
     code = "NOT_FOUND"
     message = "The requested resource was not found."
+
+
+class ConflictError(AppError):
+    status_code = status.HTTP_409_CONFLICT
+    code = "CONFLICT"
+    message = "The request conflicts with the current state of the resource."
+
+
+class InvalidInputError(AppError):
+    """Input that passed schema validation but breaks a business rule."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    code = "VALIDATION_ERROR"
+    message = "The request is not valid."
 
 
 class ServiceUnavailableError(AppError):
@@ -105,6 +121,29 @@ async def _validation_exception_handler(_: Request, exc: Exception) -> JSONRespo
     )
 
 
+def is_database_unavailable(exc: SQLAlchemyError) -> bool:
+    """True when the error means the database cannot be reached, not that a query was wrong."""
+    if isinstance(exc, (OperationalError, InterfaceError, PoolTimeoutError)):
+        return True
+    return isinstance(exc, DBAPIError) and exc.connection_invalidated
+
+
+async def _database_error_handler(_: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, SQLAlchemyError)
+    # Never log str(exc): driver messages can contain host names, user names or
+    # (for constraint violations) the offending values. The type and SQLSTATE suffice.
+    sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
+    if is_database_unavailable(exc):
+        logger.error("Application database unavailable", extra={"error_type": type(exc).__name__, "sqlstate": sqlstate})
+        return error_response(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "DATABASE_UNAVAILABLE", "The application database is unavailable."
+        )
+    logger.error("Unhandled database error", extra={"error_type": type(exc).__name__, "sqlstate": sqlstate})
+    return error_response(
+        status.HTTP_500_INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR", "An unexpected error occurred."
+    )
+
+
 async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     # The traceback goes to the logs only; the client gets a generic message.
     logger.exception("Unhandled exception", exc_info=exc)
@@ -117,4 +156,5 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, _app_error_handler)
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(RequestValidationError, _validation_exception_handler)
+    app.add_exception_handler(SQLAlchemyError, _database_error_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)

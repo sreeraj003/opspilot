@@ -127,3 +127,18 @@ def test_secrets_are_masked_in_repr() -> None:
     assert STRONG_SECRET not in rendered
     assert "nvapi-secret" not in rendered
     assert "dbpass" not in rendered
+
+
+def test_connection_pool_settings_have_safe_defaults_and_bounds() -> None:
+    settings = make_settings()
+
+    assert (settings.database_pool_size, settings.database_max_overflow) == (5, 10)
+    assert settings.database_pool_timeout_seconds == 10
+    assert settings.database_pool_recycle_seconds == 1800
+    with pytest.raises(ValidationError):
+        make_settings(database_pool_size=0)
+    with pytest.raises(ValidationError):
+        make_settings(database_pool_timeout_seconds=0)
+    with pytest.raises(ValidationError):
+        make_settings(database_pool_recycle_seconds=10)
+
