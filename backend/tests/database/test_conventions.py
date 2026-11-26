@@ -25,6 +25,11 @@ def test_all_application_models_share_one_metadata() -> None:
         "user_permissions",
         "rbac_audit_events",
         "authorization_state",
+        "schema_sources",
+        "schema_tables",
+        "schema_columns",
+        "schema_relationships",
+        "schema_change_events",
     }
 
 

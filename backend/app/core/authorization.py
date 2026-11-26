@@ -45,6 +45,14 @@ class Permission(StrEnum):
     PERMISSIONS_MANAGE = "permissions:manage"
     ACCESS_REVIEW = "access:review"
     ACCESS_ASSIGN = "access:assign"
+    # Module 06: schema registry. Named as the module specification names them.
+    SCHEMA_READ = "schema.read"
+    SCHEMA_CREATE = "schema.create"
+    SCHEMA_UPDATE = "schema.update"
+    SCHEMA_DELETE = "schema.delete"
+    SCHEMA_IMPORT = "schema.import"
+    SCHEMA_EXPORT = "schema.export"
+    SCHEMA_RELATIONSHIP_MANAGE = "schema.relationship.manage"
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +93,34 @@ SYSTEM_PERMISSIONS: tuple[SystemPermissionDefinition, ...] = (
         "Assign access",
         "Assign and revoke roles and direct permissions of users.",
         False,
+    ),
+    # Schema registry permissions are delegable: an administrator can create a custom
+    # role (for example a data steward) that maintains schema metadata without
+    # being able to manage users, roles or permissions.
+    SystemPermissionDefinition(
+        Permission.SCHEMA_READ, "View schemas", "View registered schema sources, tables, columns and relationships.", True
+    ),
+    SystemPermissionDefinition(Permission.SCHEMA_CREATE, "Create schemas", "Register new schema sources.", True),
+    SystemPermissionDefinition(
+        Permission.SCHEMA_UPDATE,
+        "Edit schemas",
+        "Edit schema sources and add or edit their table and column metadata.",
+        True,
+    ),
+    SystemPermissionDefinition(
+        Permission.SCHEMA_DELETE, "Delete schemas", "Delete schema sources, tables and columns.", True
+    ),
+    SystemPermissionDefinition(
+        Permission.SCHEMA_IMPORT, "Import schemas", "Import schema metadata from JSON into a schema source.", True
+    ),
+    SystemPermissionDefinition(
+        Permission.SCHEMA_EXPORT, "Export schemas", "Export registered schema metadata as JSON.", True
+    ),
+    SystemPermissionDefinition(
+        Permission.SCHEMA_RELATIONSHIP_MANAGE,
+        "Manage schema relationships",
+        "Create, edit and remove relationships between registered tables.",
+        True,
     ),
 )
 

@@ -16,6 +16,13 @@ from app.models.rbac import (
     UserPermission,
     UserRole,
 )
+from app.models.schema_registry import (
+    SchemaChangeEvent,
+    SchemaColumn,
+    SchemaRelationship,
+    SchemaSource,
+    SchemaTable,
+)
 from app.models.user import User
 from app.models.user_session import RetiredRefreshToken, UserSession
 
@@ -29,6 +36,11 @@ __all__ = [
     "RetiredRefreshToken",
     "Role",
     "RolePermission",
+    "SchemaChangeEvent",
+    "SchemaColumn",
+    "SchemaRelationship",
+    "SchemaSource",
+    "SchemaTable",
     "User",
     "UserPermission",
     "UserRole",
