@@ -12,6 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.authorization.cache import AuthorizationCache
+from app.connectors.adapters.http_client import ConnectorHttpClient
+from app.connectors.security.credentials import CredentialCipher
+from app.connectors.security.destinations import DestinationPolicy
+from app.connectors.trusted import ExecutionApprovalAuthority
 from app.api.routes.auth import CSRF_HEADER
 from app.core.config import APP_DESCRIPTION, Settings, get_settings
 from app.core.exceptions import register_exception_handlers
@@ -33,6 +37,19 @@ def _build_lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncCont
         if database is None:
             logger.warning("DATABASE_URL is not set; database features are unavailable")
         app.state.database = database
+        # Module 07: one pooled outbound HTTP client per process, shared by every connector.
+        # Tests may set app.state.connector_transport (a mock transport) before startup.
+        connector_http = ConnectorHttpClient(
+            app.state.connector_policy,
+            max_url_length=settings.connector_max_url_length,
+            max_connections=settings.connector_pool_max_connections,
+            max_keepalive=settings.connector_pool_max_keepalive,
+            ca_bundle=settings.connector_ca_bundle,
+            transport=getattr(app.state, "connector_transport", None),
+        )
+        app.state.connector_http = connector_http
+        if app.state.connector_cipher is None:
+            logger.warning("CONNECTOR_ENCRYPTION_KEY is not set; connector credentials can be neither stored nor used")
         logger.info(
             "Application started",
             extra={"version": settings.app_version, "environment": settings.app_env.value},
@@ -40,6 +57,8 @@ def _build_lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncCont
         try:
             yield
         finally:
+            await connector_http.aclose()
+            app.state.connector_http = None
             if database is not None:
                 await database.dispose()
             logger.info("Application stopped")
@@ -68,6 +87,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.password_reset_notifier = NoDeliveryNotifier()
     # Module 04: per-process permission cache, validated against the database revision.
     app.state.authorization_cache = AuthorizationCache(settings.authorization_cache_size)
+    # Module 07: credential encryption (None without CONNECTOR_ENCRYPTION_KEY: secrets are then
+    # refused, never stored in plaintext), the SSRF destination policy, and the in-memory
+    # authority that seals trusted query requests.
+    app.state.connector_cipher = CredentialCipher.from_settings(settings)
+    app.state.connector_policy = DestinationPolicy.from_settings(settings)
+    app.state.execution_authority = ExecutionApprovalAuthority()
 
     # Middleware added last runs first: the request context wraps CORS so every
     # response, including preflights and errors, carries a request ID.

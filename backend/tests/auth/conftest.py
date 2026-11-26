@@ -35,6 +35,7 @@ CSRF = {"X-OpsPilot-CSRF": "1"}
 AUTH_TABLES = (
     "auth_events, retired_refresh_tokens, user_sessions, password_reset_tokens, users, "
     "rbac_audit_events, user_permissions, user_roles, role_permissions, roles, permissions, "
+    "connector_audit_events, external_api_connectors, "
     "schema_change_events, schema_relationships, schema_columns, schema_tables, schema_sources"
 )
 
@@ -148,8 +149,11 @@ def api_factory(client_factory: Callable[..., TestClient], migrated_database: st
             "auth_rate_limit_per_account": 10_000,
             "auth_refresh_rate_limit_per_ip": 10_000,
         }
+        prepare = overrides.pop("prepare", None)
         values.update(overrides)
         app = create_app(make_settings(**values))
+        if prepare is not None:  # adjust app.state before startup (e.g. a mock connector transport)
+            prepare(app)
         notifier = CapturingNotifier()
         app.state.password_service = FAST_PASSWORDS
         app.state.password_reset_notifier = notifier

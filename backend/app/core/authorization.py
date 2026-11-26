@@ -53,6 +53,13 @@ class Permission(StrEnum):
     SCHEMA_IMPORT = "schema.import"
     SCHEMA_EXPORT = "schema.export"
     SCHEMA_RELATIONSHIP_MANAGE = "schema.relationship.manage"
+    # Module 07: external GET API connectors.
+    CONNECTOR_READ = "connector.read"
+    CONNECTOR_CREATE = "connector.create"
+    CONNECTOR_UPDATE = "connector.update"
+    CONNECTOR_DELETE = "connector.delete"
+    CONNECTOR_TEST = "connector.test"
+    CONNECTOR_ACTIVATE = "connector.activate"
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +128,31 @@ SYSTEM_PERMISSIONS: tuple[SystemPermissionDefinition, ...] = (
         "Manage schema relationships",
         "Create, edit and remove relationships between registered tables.",
         True,
+    ),
+    # Connector permissions are delegable so an administrator can create, for example, an
+    # integration-engineer role. They never reveal stored credentials: no permission does.
+    SystemPermissionDefinition(
+        Permission.CONNECTOR_READ,
+        "View connectors",
+        "View external API connectors (masked configuration only), their health and audit history.",
+        True,
+    ),
+    SystemPermissionDefinition(Permission.CONNECTOR_CREATE, "Create connectors", "Configure new external API connectors.", True),
+    SystemPermissionDefinition(
+        Permission.CONNECTOR_UPDATE,
+        "Edit connectors",
+        "Change external API connector settings and replace their credentials.",
+        True,
+    ),
+    SystemPermissionDefinition(Permission.CONNECTOR_DELETE, "Delete connectors", "Delete external API connectors.", True),
+    SystemPermissionDefinition(
+        Permission.CONNECTOR_TEST,
+        "Test connectors",
+        "Run the fixed, system-generated connection test against an external API connector.",
+        True,
+    ),
+    SystemPermissionDefinition(
+        Permission.CONNECTOR_ACTIVATE, "Activate connectors", "Activate and deactivate external API connectors.", True
     ),
 )
 

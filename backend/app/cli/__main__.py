@@ -3,6 +3,7 @@
     python -m app.cli create-admin      # first administrator (once per installation)
     python -m app.cli reset-password    # recover access from the server's shell
     python -m app.cli sync-permissions  # restore built-in permissions / Administrator role
+    python -m app.cli rotate-connector-keys  # re-encrypt connector credentials with the primary key
 
 Credentials come from an interactive prompt (input is hidden) or, with
 ``--no-input``, from environment variables:
@@ -22,6 +23,9 @@ import os
 import sys
 
 from app.authorization.system_catalog import ensure_system_rbac
+from app.connectors.security.credentials import CredentialCipher, CredentialDecryptionError, EncryptionNotConfiguredError
+from app.connectors.security.destinations import DestinationPolicy
+from app.connectors.trusted import ExecutionApprovalAuthority
 from app.core.config import get_settings
 from app.core.emails import InvalidEmailError, normalize_email
 from app.database.session import Database
@@ -32,6 +36,7 @@ from app.services.bootstrap_service import (
     create_initial_admin,
     reset_password_from_host,
 )
+from app.services.connector_service import ConnectorService
 from app.services.password_service import PasswordPolicyError, PasswordService, password_policy_problem
 
 EXIT_OK = 0
@@ -120,6 +125,19 @@ async def _run(args: argparse.Namespace) -> int:
                 await create_initial_admin(session, passwords, credentials)
             print(f"Installation administrator created: {normalize_email(credentials.email)}")
             print("Sign in at the OpsPilot AI web app with this email and the password you chose.")
+        elif args.command == "rotate-connector-keys":
+            async with database.session() as session:
+                service = ConnectorService(
+                    session,
+                    settings=settings,
+                    cipher=CredentialCipher.from_settings(settings),
+                    policy=DestinationPolicy.from_settings(settings),
+                    adapter=None,
+                    authority=ExecutionApprovalAuthority(),
+                )
+                changed = await service.rotate_encryption_keys()
+            print(f"Connector credentials re-encrypted with the primary key ({changed} connector(s) changed).")
+            print("Once every backend runs with the new key, remove the old key from CONNECTOR_ENCRYPTION_PREVIOUS_KEYS.")
         elif args.command == "sync-permissions":
             async with database.session() as session:
                 changes = await ensure_system_rbac(session)
@@ -135,6 +153,9 @@ async def _run(args: argparse.Namespace) -> int:
         return EXIT_OK
     except (BootstrapError, PasswordPolicyError, InvalidEmailError) as exc:
         print(f"Refused: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
+    except (EncryptionNotConfiguredError, CredentialDecryptionError) as exc:
+        print(f"Refused: {exc.message} Nothing was changed.", file=sys.stderr)
         return EXIT_REFUSED
     except (EOFError, KeyboardInterrupt):
         print("\nCancelled. Nothing was changed.", file=sys.stderr)
@@ -161,6 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser(
         "sync-permissions", help="Create any missing built-in permission or the Administrator role (idempotent)."
+    )
+    commands.add_parser(
+        "rotate-connector-keys",
+        help="Re-encrypt every connector credential with CONNECTOR_ENCRYPTION_KEY (keys being retired go in "
+        "CONNECTOR_ENCRYPTION_PREVIOUS_KEYS).",
     )
     return parser
 

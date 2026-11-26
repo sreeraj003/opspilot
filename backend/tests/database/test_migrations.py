@@ -39,6 +39,7 @@ SCHEMA_REGISTRY_TABLES = {
     "schema_relationships",
     "schema_change_events",
 }
+CONNECTOR_TABLES = {"external_api_connectors", "connector_audit_events"}
 
 
 def test_alembic_ini_contains_no_database_url() -> None:
@@ -48,13 +49,14 @@ def test_alembic_ini_contains_no_database_url() -> None:
 def test_single_linear_history_starting_with_application_settings() -> None:
     script = ScriptDirectory.from_config(alembic_config("postgresql://unused@localhost/unused_test"))
 
-    assert script.get_heads() == ["0004"]
+    assert script.get_heads() == ["0005"]
     revisions = list(script.walk_revisions())
-    assert [r.revision for r in revisions] == ["0004", "0003", "0002", "0001"]
-    assert revisions[0].down_revision == "0003"
-    assert revisions[1].down_revision == "0002"
-    assert revisions[2].down_revision == "0001"
-    assert revisions[3].down_revision is None
+    assert [r.revision for r in revisions] == ["0005", "0004", "0003", "0002", "0001"]
+    assert revisions[0].down_revision == "0004"
+    assert revisions[1].down_revision == "0003"
+    assert revisions[2].down_revision == "0002"
+    assert revisions[3].down_revision == "0001"
+    assert revisions[4].down_revision is None
 
 
 def test_migration_files_follow_the_naming_scheme() -> None:
@@ -65,6 +67,7 @@ def test_migration_files_follow_the_naming_scheme() -> None:
         "2026_11_25_0002_create_authentication_tables.py",
         "2026_11_25_0003_create_rbac_tables.py",
         "2026_11_26_0004_create_schema_registry_tables.py",
+        "2026_11_26_0005_create_external_api_connector_tables.py",
     ]
 
 
@@ -105,13 +108,22 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
 
         command.upgrade(config, "head")
         assert _tables(engine) == {
-            "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES
+            "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES, *CONNECTOR_TABLES
         }
-        assert _current_revision(engine) == "0004"
+        assert _current_revision(engine) == "0005"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
         _assert_rbac_structure_and_seed(engine)
         _assert_schema_registry_structure(engine)
+        _assert_connector_structure(engine)
+
+        command.downgrade(config, "0004")
+        assert _tables(engine) == {
+            "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES
+        }
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT count(*) FROM permissions WHERE key LIKE 'connector.%'")).scalar_one() == 0
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 4
 
         command.downgrade(config, "0003")
         assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES}
@@ -129,11 +141,12 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         assert _current_revision(engine) is None
 
         command.upgrade(config, "head")
-        assert _current_revision(engine) == "0004"
+        assert _current_revision(engine) == "0005"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
         _assert_rbac_structure_and_seed(engine)
         _assert_schema_registry_structure(engine)
+        _assert_connector_structure(engine)
     finally:
         engine.dispose()
 
@@ -233,8 +246,8 @@ def _assert_rbac_structure_and_seed(engine: Engine) -> None:
             )
         ).scalar_one()
         assert admin_permissions == len(SYSTEM_PERMISSIONS)
-        # 1 from 0003, incremented by 0004 when it added the schema permissions.
-        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 2
+        # 1 from 0003, incremented by 0004 (schema permissions) and 0005 (connector permissions).
+        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 3
         # Only built-in rows: no business roles or permissions are hard-coded.
         assert connection.execute(text("SELECT count(*) FROM roles WHERE NOT is_system")).scalar_one() == 0
         assert connection.execute(text("SELECT count(*) FROM permissions WHERE NOT is_system")).scalar_one() == 0
@@ -256,3 +269,28 @@ def _assert_schema_registry_structure(engine: Engine) -> None:
     with engine.connect() as connection:
         # No business schema is seeded.
         assert connection.execute(text("SELECT count(*) FROM schema_sources")).scalar_one() == 0
+
+
+def _assert_connector_structure(engine: Engine) -> None:
+    inspector = inspect(engine)
+    indexes = {i["name"]: i for i in inspector.get_indexes("external_api_connectors")}
+    for name in (
+        "ix_external_api_connectors_name_live",
+        "ix_external_api_connectors_endpoint_live",
+        "ix_external_api_connectors_active_source",
+    ):
+        assert indexes[name]["unique"], name
+    columns = {c["name"] for c in inspector.get_columns("external_api_connectors")}
+    # Secrets only as ciphertext; nothing that could hold database credentials.
+    assert "encrypted_credentials" in columns
+    assert not columns & {"password", "api_key", "token", "credentials", "connection_string", "dsn", "username"}
+    checks = {c["name"] for c in inspector.get_check_constraints("external_api_connectors")}
+    assert {"ck_external_api_connectors_http_method_get", "ck_external_api_connectors_credentials_encrypted"} <= checks
+    audit_columns = {c["name"] for c in inspector.get_columns("connector_audit_events")}
+    assert {"sql_fingerprint", "sql_length", "error_category", "execution_reference"} <= audit_columns
+    assert not audit_columns & {"sql", "exact_sql", "credential", "headers"}
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM external_api_connectors")).scalar_one() == 0
+        keys = set(connection.execute(text("SELECT key FROM permissions WHERE key LIKE 'connector.%'")).scalars())
+        assert keys == {"connector.read", "connector.create", "connector.update", "connector.delete", "connector.test",
+                        "connector.activate"}

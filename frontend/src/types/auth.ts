@@ -33,7 +33,13 @@ export type SystemPermission =
   | "schema.delete"
   | "schema.import"
   | "schema.export"
-  | "schema.relationship.manage";
+  | "schema.relationship.manage"
+  | "connector.read"
+  | "connector.create"
+  | "connector.update"
+  | "connector.delete"
+  | "connector.test"
+  | "connector.activate";
 
 export type Permission = SystemPermission | (string & {});
 

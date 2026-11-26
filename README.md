@@ -59,6 +59,8 @@ Then edit `.env`:
 - `POSTGRES_PASSWORD`: required for Docker Compose. Use URL-safe characters (it is embedded in a URL).
 - `DATABASE_URL`: only for running the backend outside Docker.
 - `SECRET_KEY`: signs access tokens. Required (32+ characters) when `APP_ENV=production`, recommended everywhere.
+- `CONNECTOR_ENCRYPTION_KEY` and `CONNECTOR_ALLOWED_HOSTS`: needed before you can create a company API connector
+  (see [Company API connector](#company-api-connector)).
 - `NVIDIA_*`: optional until the LLM module.
 
 | Variable | Default | Purpose |
@@ -100,6 +102,15 @@ Then edit `.env`:
 | `SCHEMA_IMPORT_MAX_BYTES` | `5242880` | Largest schema import request in bytes (5 MiB); larger requests get `413` |
 | `SCHEMA_IMPORT_MAX_DEPTH` | `10` | Deepest JSON nesting accepted in an import (at least 6) |
 | `SCHEMA_MAX_TABLES` / `SCHEMA_MAX_COLUMNS_PER_TABLE` / `SCHEMA_MAX_RELATIONSHIPS` | `2000` / `1000` / `5000` | Size limits of one registered schema |
+| `CONNECTOR_ENCRYPTION_KEY` | empty | Dedicated AES-256 key (32 bytes, base64url) encrypting connector credentials. Must differ from `SECRET_KEY`. Without it, connectors cannot be created or used |
+| `CONNECTOR_ENCRYPTION_PREVIOUS_KEYS` | empty | Old keys, comma-separated, still accepted for decryption during [key rotation](docs/CONNECTORS.md#5-credential-encryption-and-key-rotation) |
+| `CONNECTOR_ALLOWED_HOSTS` | empty | Hosts a connector may call (`host` or `*.domain`). Empty allows none |
+| `CONNECTOR_ALLOWED_PRIVATE_NETWORKS` | empty | Private CIDR ranges a connector may reach (blocked by default). Link-local is never allowed |
+| `CONNECTOR_ALLOW_HTTP` | `false` | Allow `http://` connector URLs. Development and test only; refused in production |
+| `CONNECTOR_CA_BUNDLE` | empty | Extra CA certificates (PEM path) for a company API with an internal CA |
+| `CONNECTOR_MAX_URL_LENGTH` | `8192` | Longest request URL. Longer requests are refused, never truncated |
+| `CONNECTOR_MAX_RESPONSE_BYTES_LIMIT` / `CONNECTOR_MAX_TIMEOUT_SECONDS` | `52428800` / `120` | Ceilings for per-connector response size and timeouts |
+| `CONNECTOR_POOL_MAX_CONNECTIONS` / `CONNECTOR_POOL_MAX_KEEPALIVE` | `20` / `10` | Outbound connection pool per backend process |
 
 Invalid configuration stops the backend at startup with a message naming the setting. Error messages never
 echo the values themselves, because they may be secrets.
@@ -294,6 +305,57 @@ Errors specific to the registry: `422 SCHEMA_VALIDATION_FAILED` (details: the li
 location and severity), `409 IN_USE` (a relationship uses the table or column), `409 SCHEMA_VERSION_CONFLICT` (the
 schema changed since the preview), `409 CONFLICT` (duplicate name), `413 PAYLOAD_TOO_LARGE` and `422 JSON_TOO_DEEP`.
 
+
+## Company API connector
+
+OpsPilot never connects to your business database. Instead your company exposes one HTTPS **GET** endpoint that runs
+a SQL statement passed as a query parameter and returns JSON, for example
+`GET https://company-backend.example.com/api/sql/execute?sql=SELECT%20...`. A **connector** tells OpsPilot how to call
+it.
+
+1. In `.env`, set:
+   - `CONNECTOR_ENCRYPTION_KEY`, generated with
+     `python -c "import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"`;
+   - `CONNECTOR_ALLOWED_HOSTS`, the company API's host name.
+
+   Then restart the backend with `docker compose up -d backend`.
+2. Under **Administration → Connectors**, choose **New connector**. Enter the name, the schema it serves, the base URL,
+   the endpoint path, the SQL parameter name, the authentication (none, API key, bearer token or a custom header), any
+   extra headers, and the response format.
+3. Open the connector, **Test connection** (a fixed `SELECT 1` or your health endpoint, never arbitrary SQL), then
+   **Activate** it. Only one connector per schema can be active.
+
+Credentials and secret headers are encrypted with AES-256-GCM. They are never shown again, returned by the API or
+logged. To replace one, type a new value; leave the field empty to keep it. Destinations are checked against the
+allowlist and against private, loopback and link-local addresses on every request, redirects are never followed, and
+TLS is always verified. SQL travels in the URL, so configure your company API's web server and proxies not to log the
+query string.
+
+Full guide, with a worked example, the response contract, key rotation, SSRF deployment requirements and the risks of
+SQL in GET URLs: [docs/CONNECTORS.md](docs/CONNECTORS.md). Design: [ARCHITECTURE.md §8](ARCHITECTURE.md#8-company-get-api-connector-module-07).
+
+### Connector API
+
+All under `/api/v1`, authenticated, with the standard error format. Responses never contain credentials: only
+`has_credentials`, a fixed `credential_mask`, and `has_value` for secret headers.
+
+| Endpoint | Permission | Purpose |
+| --- | --- | --- |
+| `POST /connectors` | `connector.create` | Create (always inactive) |
+| `GET /connectors` | `connector.read` | List (`offset`, `limit`, `search`, `status`, `authentication_type`, `last_test_status`, `schema_source_id`, `sort` = `name`, `updated_at`, `created_at`, `last_tested_at`, `order`) |
+| `GET /connectors/environment` | `connector.read` | Whether encryption is configured, the approved hosts and the server limits |
+| `GET /connectors/{id}` | `connector.read` | One connector, masked, with any current destination problem |
+| `PATCH /connectors/{id}` | `connector.update` | Edit; an omitted credential or secret header value keeps the stored one |
+| `DELETE /connectors/{id}` | `connector.delete` | Delete and erase stored ciphertext |
+| `PATCH /connectors/{id}/status` | `connector.activate` | `{"is_active": true/false}` |
+| `POST /connectors/{id}/test` | `connector.test` | Run the connection test (no request body; no SQL accepted) |
+| `GET /connectors/{id}/health` | `connector.read` | Health from the configuration checks (destination, credentials, schema) and the last test, without calling the company API |
+| `GET /connectors/{id}/audit` | `connector.read` | Audit events (never credentials or SQL text) |
+
+There is deliberately no endpoint that accepts SQL. Errors specific to connectors include
+`422 CONNECTOR_DESTINATION_REJECTED`, `422 CONNECTOR_CONFIGURATION_INVALID`, `503 CONNECTOR_ENCRYPTION_NOT_CONFIGURED`,
+`503 CONNECTOR_CREDENTIALS_UNAVAILABLE` and `409 CONFLICT` (duplicate name or endpoint, or another active connector
+for the schema).
 
 ## Application database
 
