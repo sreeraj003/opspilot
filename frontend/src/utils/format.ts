@@ -22,3 +22,9 @@ export function formatDate(value: string | null | undefined, locale?: string, fa
   if (Number.isNaN(date.getTime())) return "Unknown";
   return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(date);
 }
+
+/** "role_permission_added" → "Role permission added". */
+export function formatEventType(type: string): string {
+  const text = type.replace(/_/g, " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}

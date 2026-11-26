@@ -5,9 +5,9 @@ import { Link } from "react-router";
 import { z } from "zod";
 
 import { Alert } from "@/components/ui/Alert";
-import { Button } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { PasswordField } from "@/components/ui/Field";
-import { AuthLayout } from "@/features/auth/AuthLayout";
+import { AuthCard } from "@/features/auth/AuthCard";
 import { newPasswordSchema, PASSWORD_HINT } from "@/features/auth/validation";
 import { useApiClient } from "@/hooks/useApiClient";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
@@ -55,31 +55,28 @@ export function ResetPasswordPage() {
 
   if (result === "invalid") {
     return (
-      <AuthLayout title="Link invalid or expired">
+      <AuthCard title="Link invalid or expired">
         <Alert tone="error">This password reset link is invalid, has already been used, or has expired.</Alert>
-        <Link to="/forgot-password" className="mt-6 inline-flex text-sm font-medium text-stone-900 underline underline-offset-4">
+        <Link to="/forgot-password" className="mt-6 inline-flex rounded-xs text-sm font-medium text-accent-text underline underline-offset-4">
           Request a new link
         </Link>
-      </AuthLayout>
+      </AuthCard>
     );
   }
 
   if (result === "done") {
     return (
-      <AuthLayout title="Password updated">
+      <AuthCard title="Password updated">
         <Alert tone="success">Your password has been reset and all your sessions were signed out.</Alert>
-        <Link
-          to="/login"
-          className="mt-6 inline-flex w-full items-center justify-center rounded-lg bg-stone-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-stone-700"
-        >
+        <ButtonLink to="/login" variant="primary" fullWidth className="mt-6">
           Sign in
-        </Link>
-      </AuthLayout>
+        </ButtonLink>
+      </AuthCard>
     );
   }
 
   return (
-    <AuthLayout title="Choose a new password">
+    <AuthCard title="Choose a new password">
       <form onSubmit={onSubmit} noValidate className="space-y-4">
         {failure && <Alert tone="error">{failure}</Alert>}
         <PasswordField
@@ -100,6 +97,6 @@ export function ResetPasswordPage() {
           Reset password
         </Button>
       </form>
-    </AuthLayout>
+    </AuthCard>
   );
 }

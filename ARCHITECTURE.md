@@ -498,7 +498,32 @@ resource and status), **Permission** (form-based policy builder with nested AND/
 the server with a plain-language summary and read-only JSON), and an access section on each **User** page (roles,
 direct grants and denials with optional expiry, effective access).
 
-## 6. External GET SQL API integration (planned)
+## 6. Frontend foundation and design system (Module 05)
+
+The full reference is [docs/FRONTEND_DESIGN_SYSTEM.md](docs/FRONTEND_DESIGN_SYSTEM.md). In short:
+
+- **Tokens.** `src/styles/tokens.css` defines every colour, radius, shadow, type size, spacing name, breakpoint,
+  motion value and z-index layer as CSS custom properties per theme, exposed to Tailwind 4 through `@theme inline`.
+  Tailwind's default palette is removed, so components can only use semantic colours (`bg-surface`, `text-fg-muted`,
+  `bg-accent`, `text-danger-text`). `src/design/tokens.ts` mirrors what code reads.
+- **Themes.** Light and dark are two sets of variable values switched by a `dark` class on `<html>`
+  (`ThemeProvider`; preference light/dark/system stored in `localStorage`, applied before paint by
+  `public/theme-init.js`).
+- **Components.** `src/components/ui/` holds the typed component library (forms, layout, navigation, feedback,
+  overlays, data). Overlays share one focus-trap / Escape / scroll-lock hook.
+- **Layouts.** Public, authentication, application (`AppLayout`: sidebar, drawer, top bar, breadcrumbs, error and
+  loading boundaries) and administration (`AdminLayout`) layouts are route elements in `src/app/routes.tsx`, composed
+  with the existing `RequireAuth`, `RedirectIfAuthenticated` and `RequirePermission` guards.
+- **Navigation registry.** `src/app/navigation.ts` lists sections and items with an optional permission key; the
+  sidebar, mobile drawer and administration gate are built from it. Breadcrumbs come from route `handle.crumb`.
+- **Forms.** React Hook Form + Zod with `FormField` wiring labels, descriptions and errors for assistive technology.
+- **Code splitting.** Administration pages load on demand; vendor code is split into `react`, `data` and `icons`
+  chunks.
+
+The interface only decides what to show. Authentication tokens are handled exactly as in section 4.7, and every
+permission is enforced by the backend.
+
+## 7. External GET SQL API integration (planned)
 
 OpsPilot does not connect to the company's business database. The company already has a backend endpoint that
 accepts SQL as a query parameter and returns results:
@@ -516,7 +541,7 @@ OpsPilot will:
 
 The company keeps full control: its API decides which database user runs the query and can add its own limits.
 
-## 7. Planned modular backend architecture
+## 8. Planned modular backend architecture
 
 The backend is a modular monolith. Each business module adds its own routes, schemas, services and models in
 the existing layers:
@@ -549,7 +574,7 @@ Planned modules (subject to the project owner's sequencing):
 Rules for every module: route handlers stay thin, logic lives in services, persistence lives in repositories,
 dependencies are injected through `app/api/deps.py`, and no module imports another module's routes.
 
-## 8. Planned SQL security execution pipeline
+## 9. Planned SQL security execution pipeline
 
 Generated SQL is untrusted input. Before anything reaches the company API it passes a pipeline that is
 independent of the LLM and cannot be skipped:

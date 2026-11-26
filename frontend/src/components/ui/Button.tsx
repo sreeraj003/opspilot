@@ -1,37 +1,44 @@
 import { Loader2 } from "lucide-react";
-import type { ButtonHTMLAttributes } from "react";
+import type { ComponentPropsWithRef } from "react";
+import { Link, type LinkProps } from "react-router";
 
-import { cn } from "@/utils/cn";
+import { buttonClasses, type ButtonStyleOptions } from "@/components/ui/buttonStyles";
 
-type Variant = "primary" | "secondary" | "danger" | "ghost";
+export type { ButtonSize, ButtonStyleOptions, ButtonVariant } from "@/components/ui/buttonStyles";
 
-const VARIANTS: Record<Variant, string> = {
-  primary: "bg-stone-900 text-white hover:bg-stone-700 disabled:bg-stone-400",
-  secondary: "border border-stone-200 bg-white text-stone-700 shadow-sm hover:bg-stone-50",
-  danger: "bg-rose-600 text-white hover:bg-rose-500 disabled:bg-rose-300",
-  ghost: "text-stone-600 hover:bg-stone-100 hover:text-stone-900",
-};
-
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: Variant;
+export interface ButtonProps extends ComponentPropsWithRef<"button">, Omit<ButtonStyleOptions, "className"> {
+  /** Shows a spinner and disables the button while an action runs. */
   loading?: boolean;
 }
 
-export function Button({ variant = "primary", loading = false, className, children, disabled, type, ...props }: ButtonProps) {
+export function Button({
+  variant,
+  size,
+  fullWidth,
+  loading = false,
+  className,
+  children,
+  disabled,
+  type,
+  ...props
+}: ButtonProps) {
   return (
     <button
       type={type ?? "button"}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
-      className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 disabled:cursor-not-allowed disabled:opacity-70",
-        VARIANTS[variant],
-        className,
-      )}
+      className={buttonClasses({ variant, size, fullWidth, className })}
       {...props}
     >
       {loading && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}
       {children}
     </button>
   );
+}
+
+export type ButtonLinkProps = LinkProps & Omit<ButtonStyleOptions, "className">;
+
+/** A router link styled as a button, for navigation that looks like an action. */
+export function ButtonLink({ variant = "secondary", size, fullWidth, className, ...props }: ButtonLinkProps) {
+  return <Link className={buttonClasses({ variant, size, fullWidth, className: typeof className === "string" ? className : undefined })} {...props} />;
 }

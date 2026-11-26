@@ -14,6 +14,12 @@ export interface PermissionsContextValue {
   refresh: () => Promise<void>;
 }
 
+/** Query keys of the signed-in user's permissions; RBAC mutations invalidate ``all``. */
+export const permissionKeys = {
+  all: ["authorization"] as const,
+  me: (userId: string) => ["authorization", "me", userId] as const,
+};
+
 export const PermissionsContext = createContext<PermissionsContextValue | null>(null);
 
 /**

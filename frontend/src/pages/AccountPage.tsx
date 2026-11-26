@@ -2,15 +2,22 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { LogOut } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
+import { useSearchParams } from "react-router";
 import { z } from "zod";
 
 import { Alert } from "@/components/ui/Alert";
+import { Avatar } from "@/components/ui/Avatar";
+import { Card } from "@/components/ui/Card";
+import { Divider, PageHeader } from "@/components/ui/Layout";
+import { Switch } from "@/components/ui/Switch";
+import { Tabs } from "@/components/ui/Tabs";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { PasswordField } from "@/components/ui/Field";
 import { DetailList } from "@/components/DetailList";
 import { useAuth } from "@/features/auth/authContext";
 import { newPasswordSchema, PASSWORD_HINT } from "@/features/auth/validation";
+import { useTheme } from "@/features/theme/themeContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { errorMessage } from "@/utils/errors";
 import { formatDateTime } from "@/utils/format";
@@ -22,6 +29,10 @@ const schema = z
 export function AccountPage() {
   useDocumentTitle("Your account");
   const { user, changePassword, logoutEverywhere } = useAuth();
+  const { preference, theme, setPreference } = useTheme();
+  const [params, setParams] = useSearchParams();
+  const requested = params.get("tab");
+  const tab = requested === "security" || requested === "appearance" ? requested : "profile";
   const [changed, setChanged] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
@@ -51,34 +62,31 @@ export function AccountPage() {
     }
   });
 
-  return (
-    <div className="mx-auto max-w-2xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-stone-900">Your account</h1>
-        <p className="mt-1 text-sm text-stone-500">Profile details and sign-in security.</p>
+  const profile = (
+    <Card title="Profile" description="Your details are managed by an administrator.">
+      <div className="mb-5 flex items-center gap-3">
+        <Avatar name={user.full_name} size="lg" />
+        <div className="min-w-0">
+          <p className="truncate font-medium text-fg">{user.full_name}</p>
+          <p className="truncate text-sm text-fg-muted">{user.email}</p>
+        </div>
       </div>
-
-      <section aria-labelledby="profile-heading" className="rounded-2xl border border-stone-200 bg-white p-6 text-sm">
-        <h2 id="profile-heading" className="mb-4 text-base font-semibold text-stone-900">
-          Profile
-        </h2>
+      <div className="text-sm">
         <DetailList
           items={[
-            { label: "Name", value: user.full_name },
-            { label: "Email", value: user.email },
             { label: "Username", value: user.username ?? "Not set" },
-            { label: "Role", value: user.is_superuser ? "Installation administrator" : "User" },
+            { label: "Account type", value: user.is_superuser ? "Installation administrator" : "User" },
             { label: "Last sign-in", value: formatDateTime(user.last_login_at) },
           ]}
         />
-      </section>
+      </div>
+    </Card>
+  );
 
-      <section aria-labelledby="password-heading" className="rounded-2xl border border-stone-200 bg-white p-6">
-        <h2 id="password-heading" className="text-base font-semibold text-stone-900">
-          Change password
-        </h2>
-        <p className="mt-1 text-sm text-stone-500">Changing your password signs out every other session.</p>
-        <form onSubmit={onSubmit} noValidate className="mt-5 space-y-4">
+  const security = (
+    <div className="space-y-section">
+      <Card title="Change password" description="Changing your password signs out every other session.">
+        <form onSubmit={onSubmit} noValidate className="space-y-4">
           {changed && <Alert tone="success">Password changed. Your other sessions have been signed out.</Alert>}
           {failure && <Alert tone="error">{failure}</Alert>}
           <PasswordField label="Current password" autoComplete="current-password" error={errors.current?.message} {...register("current")} />
@@ -94,18 +102,65 @@ export function AccountPage() {
             Change password
           </Button>
         </form>
-      </section>
+      </Card>
 
-      <section aria-labelledby="sessions-heading" className="rounded-2xl border border-stone-200 bg-white p-6">
-        <h2 id="sessions-heading" className="text-base font-semibold text-stone-900">
-          Sessions
-        </h2>
-        <p className="mt-1 text-sm text-stone-500">Sign out of OpsPilot AI on every device and browser, including this one.</p>
-        <Button variant="secondary" className="mt-4" onClick={() => setConfirmingSignOut(true)}>
+      <Card title="Sessions" description="Sign out of OpsPilot AI on every device and browser, including this one.">
+        <Button variant="secondary" onClick={() => setConfirmingSignOut(true)}>
           <LogOut aria-hidden="true" className="h-4 w-4" />
           Sign out everywhere
         </Button>
-      </section>
+      </Card>
+    </div>
+  );
+
+  const appearance = (
+    <Card title="Appearance" description="Saved in this browser only.">
+      <div className="space-y-5">
+        <Switch
+          label="Match the operating system"
+          description="Follow your device's light or dark setting."
+          checked={preference === "system"}
+          onCheckedChange={(checked) => setPreference(checked ? "system" : theme)}
+        />
+        <Divider />
+        <fieldset disabled={preference === "system"} className="disabled:opacity-60">
+          <legend className="mb-2 text-sm font-medium text-fg">Theme</legend>
+          <div className="grid grid-cols-2 gap-3 sm:max-w-sm">
+            {(["light", "dark"] as const).map((option) => (
+              <label
+                key={option}
+                className="flex cursor-pointer items-center gap-2.5 rounded-control border border-line bg-surface px-3 py-2.5 text-sm text-fg-secondary has-checked:border-accent has-checked:bg-accent-subtle has-checked:text-accent-text"
+              >
+                <input
+                  type="radio"
+                  name="theme"
+                  value={option}
+                  checked={theme === option}
+                  onChange={() => setPreference(option)}
+                  className="accent-accent"
+                />
+                {option === "light" ? "Light" : "Dark"}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      </div>
+    </Card>
+  );
+
+  return (
+    <div className="max-w-3xl space-y-section">
+      <PageHeader title="Your account" description="Profile details, sign-in security and appearance." />
+      <Tabs
+        label="Account sections"
+        value={tab}
+        onValueChange={(next) => setParams(next === "profile" ? {} : { tab: next }, { replace: true })}
+        items={[
+          { id: "profile", label: "Profile", content: profile },
+          { id: "security", label: "Security", content: security },
+          { id: "appearance", label: "Appearance", content: appearance },
+        ]}
+      />
 
       <ConfirmDialog
         open={confirmingSignOut}

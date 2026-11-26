@@ -2,14 +2,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, type ReactNode } from "react";
 
 import { useAuth } from "@/features/auth/authContext";
-import { PermissionsContext, type PermissionsContextValue } from "@/features/permissions/permissionsContext";
+import { permissionKeys, PermissionsContext, type PermissionsContextValue } from "@/features/permissions/permissionsContext";
 import { useApiClient } from "@/hooks/useApiClient";
 import { getMyPermissions } from "@/services/rbacService";
 
-export const permissionKeys = {
-  all: ["authorization"] as const,
-  me: (userId: string) => ["authorization", "me", userId] as const,
-};
 
 const STALE_MS = 30_000;
 const REFRESH_INTERVAL_MS = 5 * 60_000;

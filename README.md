@@ -338,7 +338,10 @@ npm run dev                        # http://localhost:5173
 The home page shows live **System status** cards for the application, the backend API and the database: the
 quickest way to confirm the frontend can reach the backend.
 
-Other scripts: `npm run build`, `npm run preview`, `npm run typecheck`.
+Other scripts: `npm run build`, `npm run preview`, `npm run typecheck`, `npm run lint`.
+
+The interface is built from a shared design system (tokens, light and dark themes, components, layouts and a
+navigation registry): see [docs/FRONTEND_DESIGN_SYSTEM.md](docs/FRONTEND_DESIGN_SYSTEM.md).
 
 ## Running tests
 
@@ -389,6 +392,7 @@ scratch database (the test user needs `CREATEDB`, which the test container's use
 cd frontend
 npm test                           # Vitest + React Testing Library
 npm run typecheck
+npm run lint                       # ESLint (TypeScript, React hooks, jsx-a11y)
 ```
 
 ## Error format
@@ -432,15 +436,16 @@ backend/
   tests/            API and config tests; tests/database/ database layer; tests/auth/ authentication and users
 frontend/
   src/
-    app/            App, providers, routes, query client
-    components/     Reusable UI (status cards, badges, error boundary, ui/ form fields, buttons, dialogs)
-    features/       auth/ (AuthProvider, route guards, validation), users/ (queries, create dialog)
-    layouts/        AppShell (navigation, account menu)
-    pages/          Home, Login, ForgotPassword, ResetPassword, Account, Users, UserDetail, NotFound
+    app/            App, providers, routes, navigation registry, breadcrumbs (route handles), lazy pages
+    components/     ui/ design-system components; status cards, error boundary, brand mark
+    design/         tokens.ts (breakpoints, z-index, durations mirrored from styles/tokens.css)
+    features/       auth/, permissions/, rbac/, users/, theme/ (provider, toggle), product/
+    layouts/        PublicLayout, AuthLayout, AppLayout, AdminLayout; shell/ (sidebar, top bar, menus)
+    pages/          Home, Login, ForgotPassword, ResetPassword, Account, Users, UserDetail, Roles, Permissions, NotFound
     services/       API client, auth session (in-memory token, refresh), typed auth/user/system calls
     hooks/          API client injection, status queries, document title
     types/          API contract types
-    utils/, styles/
+    utils/, styles/ (index.css, tokens.css)
 docker-compose.yml, docker-compose.dev.yml, docker-compose.test.yml, .env.example
 ```
 

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { PasswordField, TextField } from "@/components/ui/Field";
-import { AuthLayout } from "@/features/auth/AuthLayout";
+import { AuthCard } from "@/features/auth/AuthCard";
 import { useAuth } from "@/features/auth/authContext";
 import type { LoginRedirectState } from "@/features/auth/guards";
 import { emailSchema } from "@/features/auth/validation";
@@ -51,7 +51,7 @@ export function LoginPage() {
   });
 
   return (
-    <AuthLayout title="Sign in" subtitle="Use the account your administrator created for you.">
+    <AuthCard title="Sign in" subtitle="Use the account your administrator created for you.">
       <form onSubmit={onSubmit} noValidate className="space-y-4">
         {sessionExpired && !failure && <Alert tone="info">Your session has ended. Sign in again to continue.</Alert>}
         {failure && <Alert tone="error">{failure}</Alert>}
@@ -71,7 +71,7 @@ export function LoginPage() {
           {...register("password")}
         />
         <div className="flex justify-end">
-          <Link to="/forgot-password" className="text-sm font-medium text-stone-600 underline-offset-4 hover:text-stone-900 hover:underline">
+          <Link to="/forgot-password" className="text-sm font-medium text-fg-secondary underline-offset-4 hover:text-fg hover:underline">
             Forgot password?
           </Link>
         </div>
@@ -79,6 +79,6 @@ export function LoginPage() {
           {isSubmitting ? "Signing in" : "Sign in"}
         </Button>
       </form>
-    </AuthLayout>
+    </AuthCard>
   );
 }

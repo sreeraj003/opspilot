@@ -7,11 +7,15 @@ import { z } from "zod";
 
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
-import { ConfirmDialog, Dialog } from "@/components/ui/Dialog";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { ConfirmDialog, Dialog, DialogActions } from "@/components/ui/Dialog";
 import { TextField } from "@/components/ui/Field";
-import { Spinner } from "@/components/ui/Spinner";
+import { Select } from "@/components/ui/Input";
+import { PageHeader } from "@/components/ui/Layout";
+import { useToast } from "@/components/ui/toastContext";
 import { usePermissions } from "@/features/permissions/permissionsContext";
-import { ActiveBadge, Pagination, SearchInput, SELECT_CLASSES, SystemTag, useDebounced } from "@/features/rbac/components";
+import { ActiveBadge, Pagination, SearchInput, SystemTag } from "@/features/rbac/components";
+import { useDebounced } from "@/hooks/useDebounced";
 import { KEY_PATTERN, slugify } from "@/features/rbac/keys";
 import { useCreateRole, useDeleteRole, useRoleList, useSetRoleActive } from "@/features/rbac/hooks";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
@@ -88,14 +92,14 @@ function CreateRoleDialog({ open, onClose, onCreated }: { open: boolean; onClose
           }}
         />
         <TextField label="Description (optional)" error={errors.description?.message} {...register("description")} />
-        <div className="flex justify-end gap-2">
+        <DialogActions>
           <Button variant="secondary" onClick={close}>
             Cancel
           </Button>
           <Button type="submit" loading={isSubmitting}>
             Create role
           </Button>
-        </div>
+        </DialogActions>
       </form>
     </Dialog>
   );
@@ -115,24 +119,80 @@ export function RolesPage() {
   const remove = useDeleteRole();
   const [creating, setCreating] = useState(false);
   const [toDelete, setToDelete] = useState<Role | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const toast = useToast();
+
+  const columns: DataTableColumn<Role>[] = [
+    {
+      id: "role",
+      header: "Role",
+      cell: (role) => (
+        <div className="min-w-0">
+          <Link to={`/admin/roles/${role.id}`} className="font-medium text-fg hover:underline">
+            {role.name}
+          </Link>
+          {role.is_system && <SystemTag />}
+          {role.description && <p className="mt-0.5 line-clamp-2 max-w-md text-xs text-fg-muted">{role.description}</p>}
+        </div>
+      ),
+    },
+    { id: "key", header: "Key", cell: (role) => <span className="font-mono text-xs">{role.key}</span>, hideBelow: "md" },
+    { id: "status", header: "Status", cell: (role) => <ActiveBadge active={role.is_active} /> },
+    { id: "permissions", header: "Permissions", align: "right", cell: (role) => role.permission_count, hideBelow: "sm" },
+    { id: "users", header: "Users", align: "right", cell: (role) => role.user_count, hideBelow: "sm" },
+    {
+      id: "actions",
+      header: <span className="sr-only">Actions</span>,
+      align: "right",
+      cell: (role) => (
+        <div className="flex justify-end gap-1">
+          <Button variant="ghost" size="sm" className="hidden sm:inline-flex" onClick={() => navigate(`/admin/roles/${role.id}`)} aria-label={`View ${role.name}`}>
+            View
+          </Button>
+          {canManage && !role.is_system && (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`${role.is_active ? "Deactivate" : "Activate"} ${role.name}`}
+                loading={setActive.isPending && setActive.variables?.id === role.id}
+                onClick={() => {
+                  setActive.mutate(
+                    { id: role.id, active: !role.is_active },
+                    {
+                      onSuccess: () => toast.notify({ title: role.is_active ? "Role deactivated" : "Role activated", description: role.name }),
+                      onError: (error) => toast.notify({ tone: "error", title: "Could not change the role", description: errorMessage(error) }),
+                    },
+                  );
+                }}
+              >
+                {role.is_active ? "Deactivate" : "Activate"}
+              </Button>
+              <Button variant="danger-ghost" size="sm" aria-label={`Delete ${role.name}`} onClick={() => setToDelete(role)}>
+                Delete
+              </Button>
+            </>
+          )}
+        </div>
+      ),
+    },
+  ];
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-stone-900">Roles</h1>
-          <p className="mt-1 text-sm text-stone-500">Roles group permissions. A user's access is the sum of their roles and direct permissions.</p>
-        </div>
-        {canManage && (
-          <Button onClick={() => setCreating(true)}>
-            <Plus aria-hidden="true" className="h-4 w-4" />
-            Create role
-          </Button>
-        )}
-      </div>
+    <div className="space-y-section">
+      <PageHeader
+        title="Roles"
+        description="Roles group permissions. A user's access is the sum of their roles and direct permissions."
+        actions={
+          canManage && (
+            <Button onClick={() => setCreating(true)}>
+              <Plus aria-hidden="true" className="h-4 w-4" />
+              Create role
+            </Button>
+          )
+        }
+      />
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
         <SearchInput
           label="Search roles"
           placeholder="Search by name or key"
@@ -142,107 +202,45 @@ export function RolesPage() {
             setPage(0);
           }}
         />
-        <select
+        <Select
           aria-label="Filter by status"
           value={status}
           onChange={(event) => {
             setStatus(event.target.value as StatusFilter);
             setPage(0);
           }}
-          className={SELECT_CLASSES}
+          className="sm:w-44"
         >
           <option value="all">All statuses</option>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
-        </select>
+        </Select>
       </div>
 
-      {actionError && <Alert tone="error">{actionError}</Alert>}
-
-      <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white">
-        {list.isPending ? (
-          <Spinner label="Loading roles" />
-        ) : list.isError ? (
-          <div className="p-6">
-            <Alert tone="error">{errorMessage(list.error, "Roles could not be loaded.")}</Alert>
-          </div>
-        ) : list.data.items.length === 0 ? (
-          <div className="flex flex-col items-center px-6 py-14 text-center">
-            <ShieldCheck aria-hidden="true" className="h-8 w-8 text-stone-300" strokeWidth={1.5} />
-            <p className="mt-3 text-sm font-medium text-stone-900">No roles found</p>
-            <p className="mt-1 text-sm text-stone-500">{search || status !== "all" ? "Try a different search or filter." : "Create a role to get started."}</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-stone-200 text-sm">
-              <thead className="bg-stone-50 text-left text-xs font-medium uppercase tracking-wide text-stone-500">
-                <tr>
-                  <th scope="col" className="px-4 py-3">Role</th>
-                  <th scope="col" className="px-4 py-3">Key</th>
-                  <th scope="col" className="px-4 py-3">Status</th>
-                  <th scope="col" className="px-4 py-3 text-right">Permissions</th>
-                  <th scope="col" className="px-4 py-3 text-right">Users</th>
-                  <th scope="col" className="px-4 py-3 text-right">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-100">
-                {list.data.items.map((role) => (
-                  <tr key={role.id} className="hover:bg-stone-50/60">
-                    <td className="px-4 py-3">
-                      <Link to={`/admin/roles/${role.id}`} className="font-medium text-stone-900 hover:underline">
-                        {role.name}
-                      </Link>
-                      {role.is_system && <SystemTag />}
-                      {role.description && <p className="mt-0.5 text-xs text-stone-500">{role.description}</p>}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-stone-600">{role.key}</td>
-                    <td className="px-4 py-3">
-                      <ActiveBadge active={role.is_active} />
-                    </td>
-                    <td className="px-4 py-3 text-right text-stone-600">{role.permission_count}</td>
-                    <td className="px-4 py-3 text-right text-stone-600">{role.user_count}</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" onClick={() => navigate(`/admin/roles/${role.id}`)} aria-label={`View ${role.name}`}>
-                          View
-                        </Button>
-                        {canManage && !role.is_system && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              aria-label={`${role.is_active ? "Deactivate" : "Activate"} ${role.name}`}
-                              loading={setActive.isPending && setActive.variables?.id === role.id}
-                              onClick={() => {
-                                setActionError(null);
-                                setActive.mutate({ id: role.id, active: !role.is_active }, { onError: (error) => setActionError(errorMessage(error)) });
-                              }}
-                            >
-                              {role.is_active ? "Deactivate" : "Activate"}
-                            </Button>
-                            <Button variant="ghost" aria-label={`Delete ${role.name}`} onClick={() => setToDelete(role)}>
-                              Delete
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {list.data && <Pagination page={page} pageSize={ROLES_PAGE_SIZE} total={list.data.total} onPage={setPage} />}
+      <DataTable
+        caption="Roles"
+        columns={columns}
+        rows={list.data?.items}
+        getRowId={(role) => role.id}
+        loading={list.isPending}
+        loadingLabel="Loading roles"
+        error={list.isError ? errorMessage(list.error, "Roles could not be loaded.") : null}
+        onRetry={() => void list.refetch()}
+        retrying={list.isFetching}
+        empty={{
+          icon: ShieldCheck,
+          title: "No roles found",
+          description: search || status !== "all" ? "Try a different search or filter." : "Create a role to get started.",
+        }}
+        footer={list.data && <Pagination page={page} pageSize={ROLES_PAGE_SIZE} total={list.data.total} onPage={setPage} itemLabel="Roles" />}
+      />
 
       <CreateRoleDialog
         open={creating}
         onClose={() => setCreating(false)}
         onCreated={(role) => {
           setCreating(false);
+          toast.notify({ title: "Role created", description: role.name });
           navigate(`/admin/roles/${role.id}`);
         }}
       />
@@ -253,7 +251,7 @@ export function RolesPage() {
         description={
           toDelete && (
             <>
-              <strong className="font-medium text-stone-900">{toDelete.name}</strong> is removed from{" "}
+              <strong className="font-medium text-fg">{toDelete.name}</strong> is removed from{" "}
               {toDelete.user_count === 1 ? "1 user" : `${toDelete.user_count} users`} immediately. Its history is kept for auditing.
             </>
           )
@@ -265,7 +263,15 @@ export function RolesPage() {
           setToDelete(null);
           remove.reset();
         }}
-        onConfirm={() => toDelete && remove.mutate(toDelete.id, { onSuccess: () => setToDelete(null) })}
+        onConfirm={() =>
+          toDelete &&
+          remove.mutate(toDelete.id, {
+            onSuccess: () => {
+              toast.notify({ title: "Role deleted", description: toDelete.name });
+              setToDelete(null);
+            },
+          })
+        }
       />
     </div>
   );

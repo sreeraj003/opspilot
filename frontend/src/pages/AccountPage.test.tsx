@@ -12,6 +12,7 @@ describe("AccountPage", () => {
     });
     renderRoute("/account", fetchImpl, makeCurrentUser());
 
+    await user.click(await screen.findByRole("tab", { name: "Security" }));
     await user.type(await screen.findByLabelText("Current password"), "old passphrase here");
     await user.type(screen.getByLabelText("New password"), "brand new passphrase");
     await user.type(screen.getByLabelText("Confirm new password"), "brand new passphrase");
@@ -36,6 +37,7 @@ describe("AccountPage", () => {
       makeCurrentUser(),
     );
 
+    await user.click(await screen.findByRole("tab", { name: "Security" }));
     await user.type(await screen.findByLabelText("Current password"), "wrong passphrase");
     await user.type(screen.getByLabelText("New password"), "brand new passphrase");
     await user.type(screen.getByLabelText("Confirm new password"), "brand new passphrase");
@@ -49,6 +51,7 @@ describe("AccountPage", () => {
     const fetchImpl = routeFetch({ "POST /api/v1/auth/logout-all": () => new Response(null, { status: 204 }) });
     const { router } = renderRoute("/account", fetchImpl, makeCurrentUser());
 
+    await user.click(await screen.findByRole("tab", { name: "Security" }));
     await user.click(await screen.findByRole("button", { name: "Sign out everywhere" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Sign out everywhere" }));
 
