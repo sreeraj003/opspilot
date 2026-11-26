@@ -1,6 +1,15 @@
 import type { RouteObject } from "react-router";
 
-import { PermissionEditorPage, PermissionsPage, RoleDetailPage, RolesPage, UserDetailPage, UsersPage } from "@/app/lazyPages";
+import {
+  PermissionEditorPage,
+  PermissionsPage,
+  RoleDetailPage,
+  RolesPage,
+  SchemaDetailPage,
+  SchemasPage,
+  UserDetailPage,
+  UsersPage,
+} from "@/app/lazyPages";
 import type { RouteHandle } from "@/app/routeHandle";
 import { RouteErrorFallback } from "@/components/ErrorBoundary";
 import { RedirectIfAuthenticated, RequireAuth, RequirePermission } from "@/features/auth/guards";
@@ -91,6 +100,15 @@ export const routes: RouteObject[] = [
                         element: <PermissionEditorPage />,
                         handle: crumb((params) => (params.permissionId === "new" ? "New permission" : "Permission details")),
                       },
+                    ],
+                  },
+                  {
+                    path: "schemas",
+                    element: <RequirePermission permission="schema.read" />,
+                    handle: crumb("Schemas"),
+                    children: [
+                      { index: true, element: <SchemasPage /> },
+                      { path: ":schemaId", element: <SchemaDetailPage />, handle: crumb("Schema details") },
                     ],
                   },
                 ],

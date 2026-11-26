@@ -32,6 +32,13 @@ RBAC_TABLES = {
     "rbac_audit_events",
     "authorization_state",
 }
+SCHEMA_REGISTRY_TABLES = {
+    "schema_sources",
+    "schema_tables",
+    "schema_columns",
+    "schema_relationships",
+    "schema_change_events",
+}
 
 
 def test_alembic_ini_contains_no_database_url() -> None:
@@ -41,12 +48,13 @@ def test_alembic_ini_contains_no_database_url() -> None:
 def test_single_linear_history_starting_with_application_settings() -> None:
     script = ScriptDirectory.from_config(alembic_config("postgresql://unused@localhost/unused_test"))
 
-    assert script.get_heads() == ["0003"]
+    assert script.get_heads() == ["0004"]
     revisions = list(script.walk_revisions())
-    assert [r.revision for r in revisions] == ["0003", "0002", "0001"]
-    assert revisions[0].down_revision == "0002"
-    assert revisions[1].down_revision == "0001"
-    assert revisions[2].down_revision is None
+    assert [r.revision for r in revisions] == ["0004", "0003", "0002", "0001"]
+    assert revisions[0].down_revision == "0003"
+    assert revisions[1].down_revision == "0002"
+    assert revisions[2].down_revision == "0001"
+    assert revisions[3].down_revision is None
 
 
 def test_migration_files_follow_the_naming_scheme() -> None:
@@ -56,6 +64,7 @@ def test_migration_files_follow_the_naming_scheme() -> None:
         "2026_11_25_0001_create_application_settings.py",
         "2026_11_25_0002_create_authentication_tables.py",
         "2026_11_25_0003_create_rbac_tables.py",
+        "2026_11_26_0004_create_schema_registry_tables.py",
     ]
 
 
@@ -95,11 +104,19 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         assert _tables(engine) == set()
 
         command.upgrade(config, "head")
-        assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES}
-        assert _current_revision(engine) == "0003"
+        assert _tables(engine) == {
+            "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES
+        }
+        assert _current_revision(engine) == "0004"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
         _assert_rbac_structure_and_seed(engine)
+        _assert_schema_registry_structure(engine)
+
+        command.downgrade(config, "0003")
+        assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES}
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT count(*) FROM permissions WHERE key LIKE 'schema.%'")).scalar_one() == 0
 
         command.downgrade(config, "0002")
         assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES}
@@ -112,10 +129,11 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         assert _current_revision(engine) is None
 
         command.upgrade(config, "head")
-        assert _current_revision(engine) == "0003"
+        assert _current_revision(engine) == "0004"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
         _assert_rbac_structure_and_seed(engine)
+        _assert_schema_registry_structure(engine)
     finally:
         engine.dispose()
 
@@ -215,7 +233,26 @@ def _assert_rbac_structure_and_seed(engine: Engine) -> None:
             )
         ).scalar_one()
         assert admin_permissions == len(SYSTEM_PERMISSIONS)
-        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 1
+        # 1 from 0003, incremented by 0004 when it added the schema permissions.
+        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 2
         # Only built-in rows: no business roles or permissions are hard-coded.
         assert connection.execute(text("SELECT count(*) FROM roles WHERE NOT is_system")).scalar_one() == 0
         assert connection.execute(text("SELECT count(*) FROM permissions WHERE NOT is_system")).scalar_one() == 0
+
+
+def _assert_schema_registry_structure(engine: Engine) -> None:
+    inspector = inspect(engine)
+    for table, index in (
+        ("schema_sources", "ix_schema_sources_name_live"),
+        ("schema_tables", "ix_schema_tables_name_live"),
+        ("schema_columns", "ix_schema_columns_name_live"),
+        ("schema_relationships", "ix_schema_relationships_pair_live"),
+    ):
+        indexes = {i["name"]: i for i in inspector.get_indexes(table)}
+        assert indexes[index]["unique"], (table, index)
+    source_columns = {c["name"] for c in inspector.get_columns("schema_sources")}
+    # Metadata only: nothing that could hold connection details or credentials.
+    assert not source_columns & {"host", "port", "username", "password", "connection_string", "url", "dsn"}
+    with engine.connect() as connection:
+        # No business schema is seeded.
+        assert connection.execute(text("SELECT count(*) FROM schema_sources")).scalar_one() == 0

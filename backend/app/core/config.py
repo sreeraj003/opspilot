@@ -116,6 +116,17 @@ class Settings(BaseSettings):
     # Users whose resolved grants are cached per process (bounded LRU).
     authorization_cache_size: int = Field(default=1024, ge=0, le=100000)
 
+    # Schema registry (Module 06). Imported metadata is untrusted input: these bound it.
+    # Largest accepted schema import request body, in bytes.
+    schema_import_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
+    # Deepest JSON nesting accepted in an import request (the format itself needs 6).
+    schema_import_max_depth: int = Field(default=10, ge=6, le=32)
+    # Most tables one schema source may hold, and most columns one table may hold.
+    schema_max_tables: int = Field(default=2000, ge=1, le=20000)
+    schema_max_columns_per_table: int = Field(default=1000, ge=1, le=5000)
+    # Most relationships one schema source may hold.
+    schema_max_relationships: int = Field(default=5000, ge=1, le=50000)
+
     # AI provider settings. Optional until the LLM module is implemented.
     nvidia_api_key: SecretStr | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"

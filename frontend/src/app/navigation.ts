@@ -1,4 +1,4 @@
-import { Home, KeyRound, ShieldCheck, Users, type LucideIcon } from "lucide-react";
+import { Database, Home, KeyRound, ShieldCheck, Users, type LucideIcon } from "lucide-react";
 
 /**
  * The application's navigation registry. The sidebar, the mobile drawer and the
@@ -41,6 +41,7 @@ export const navigation: NavSection[] = [
       { id: "users", label: "Users", to: "/admin/users", icon: Users, permission: "users:read" },
       { id: "roles", label: "Roles", to: "/admin/roles", icon: ShieldCheck, permission: "roles:read" },
       { id: "permissions", label: "Permissions", to: "/admin/permissions", icon: KeyRound, permission: "permissions:read" },
+      { id: "schemas", label: "Schemas", to: "/admin/schemas", icon: Database, permission: "schema.read" },
     ],
   },
 ];

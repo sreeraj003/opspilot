@@ -24,7 +24,10 @@ from app.services.application_settings_service import ApplicationSettingsService
 from app.services.auth_service import AuthService, ClientInfo, PasswordResetNotifier, Principal
 from app.services.health_service import HealthService
 from app.services.password_service import PasswordService
+from app.schema_registry.catalog import RegistrySchemaCatalog
+from app.schema_registry.validation import SchemaLimits
 from app.services.rbac_service import RbacService
+from app.services.schema_registry_service import SchemaRegistryService
 from app.services.user_service import UserService
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -199,12 +202,27 @@ def get_authorization_engine(session: DbSessionDep, cache: AuthorizationCacheDep
 AuthorizationEngineDep = Annotated[AuthorizationEngine, Depends(get_authorization_engine)]
 
 
-def get_rbac_service(session: DbSessionDep, cache: AuthorizationCacheDep, settings: SettingsDep) -> RbacService:
+async def get_rbac_service(session: DbSessionDep, cache: AuthorizationCacheDep, settings: SettingsDep) -> RbacService:
     limits = PolicyLimits(
         max_depth=settings.authorization_policy_max_depth,
         max_conditions=settings.authorization_policy_max_conditions,
     )
-    return RbacService(session, cache=cache, limits=limits)
+    # Policies are checked against the registered schemas (Module 06). With no
+    # schema registered the catalog answers "unknown" and only the policy itself is checked.
+    catalog = await RegistrySchemaCatalog.load(session)
+    return RbacService(session, cache=cache, limits=limits, catalog=catalog)
 
 
 RbacServiceDep = Annotated[RbacService, Depends(get_rbac_service)]
+
+
+def get_schema_registry_service(session: DbSessionDep, settings: SettingsDep) -> SchemaRegistryService:
+    limits = SchemaLimits(
+        max_tables=settings.schema_max_tables,
+        max_columns_per_table=settings.schema_max_columns_per_table,
+        max_relationships=settings.schema_max_relationships,
+    )
+    return SchemaRegistryService(session, limits=limits)
+
+
+SchemaRegistryServiceDep = Annotated[SchemaRegistryService, Depends(get_schema_registry_service)]

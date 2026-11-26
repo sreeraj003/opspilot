@@ -26,7 +26,14 @@ export type SystemPermission =
   | "permissions:read"
   | "permissions:manage"
   | "access:review"
-  | "access:assign";
+  | "access:assign"
+  | "schema.read"
+  | "schema.create"
+  | "schema.update"
+  | "schema.delete"
+  | "schema.import"
+  | "schema.export"
+  | "schema.relationship.manage";
 
 export type Permission = SystemPermission | (string & {});
 

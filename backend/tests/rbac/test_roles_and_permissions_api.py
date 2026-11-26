@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.core.authorization import SYSTEM_PERMISSIONS
 from tests.rbac.conftest import SALES_VIEW, Rbac
 
 pytestmark = pytest.mark.postgres
@@ -43,7 +44,7 @@ def test_list_roles_with_search_status_and_pagination(rbac: Rbac) -> None:
     assert [r["key"] for r in rbac.ok(rbac.get("/roles?search=manager"))["items"]] == ["regional_manager", "sales_manager"]
     assert [r["key"] for r in rbac.ok(rbac.get("/roles?status=inactive"))["items"]] == ["ceo"]
     admin = next(r for r in rbac.ok(rbac.get("/roles?search=administrator"))["items"])
-    assert admin["is_system"] and admin["permission_count"] == 10
+    assert admin["is_system"] and admin["permission_count"] == len(SYSTEM_PERMISSIONS)
 
 
 def test_duplicate_role_keys_and_names_are_rejected(rbac: Rbac) -> None:

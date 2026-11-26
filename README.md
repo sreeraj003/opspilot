@@ -97,6 +97,9 @@ Then edit `.env`:
 | `VITE_API_TIMEOUT_MS` | `10000` | Frontend request timeout |
 | `AUTHORIZATION_POLICY_MAX_DEPTH` / `AUTHORIZATION_POLICY_MAX_CONDITIONS` | `4` / `50` | Deepest AND/OR nesting and most conditions in one permission policy |
 | `AUTHORIZATION_CACHE_SIZE` | `1024` | Users whose resolved permissions are cached per backend process (checked against a database revision on every request; `0` disables) |
+| `SCHEMA_IMPORT_MAX_BYTES` | `5242880` | Largest schema import request in bytes (5 MiB); larger requests get `413` |
+| `SCHEMA_IMPORT_MAX_DEPTH` | `10` | Deepest JSON nesting accepted in an import (at least 6) |
+| `SCHEMA_MAX_TABLES` / `SCHEMA_MAX_COLUMNS_PER_TABLE` / `SCHEMA_MAX_RELATIONSHIPS` | `2000` / `1000` / `5000` | Size limits of one registered schema |
 
 Invalid configuration stops the backend at startup with a message naming the setting. Error messages never
 echo the values themselves, because they may be secrets.
@@ -237,6 +240,60 @@ Rules worth knowing:
   ```
 
 Design details: [ARCHITECTURE.md §5](ARCHITECTURE.md#5-roles-and-permissions-module-04).
+
+## Schema registry
+
+OpsPilot needs to know what your business databases look like, without ever connecting to them. Under
+**Administration → Schemas** you register each database's metadata:
+
+1. **Register schema**: a name, the database type (PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, SQLite or other)
+   and an optional dialect and description.
+2. **Add the metadata**, either by hand on the *Tables* tab (tables, then columns with their data type, primary key,
+   foreign key, nullable and *sensitive* flags, plus a description and business meaning) and the *Relationships* tab,
+   or by importing a JSON file on the *Import / Export* tab. The import is always validated and previewed first, and
+   you choose how it treats what is already registered (*add new items only*, *merge* or *replace*). Format and
+   examples: [docs/SCHEMA_IMPORT_FORMAT.md](docs/SCHEMA_IMPORT_FORMAT.md).
+3. **Check it** on the *Overview* tab (counts and metadata checks such as tables without a primary key) and follow every
+   change, with its version number, on *Schema History*.
+
+Mark columns holding personal or secret data as **sensitive**: they are left out of the AI's schema context unless a
+later module explicitly asks for them. Inactive tables, columns and relationships are kept but ignored.
+
+Access is granted with seven permissions you can put in any role: `schema.read`, `schema.create`, `schema.update`,
+`schema.delete`, `schema.import`, `schema.export` and `schema.relationship.manage`. The Administrator role has all
+of them. Once tables are registered, data permissions (`database_data` policies) are checked against them, so a policy
+that names a table or column that does not exist is refused.
+
+Design details: [ARCHITECTURE.md §7](ARCHITECTURE.md#7-external-schema-registry-module-06).
+
+### Schema registry API
+
+All under `/api/v1`, authenticated, with the standard error format. Lists take `offset`, `limit` (≤ 100) and
+`search`; most take `status` (`all`, `active`, `inactive`). Full request and response schemas are in the OpenAPI
+documentation at `/docs`.
+
+| Endpoint | Permission | Purpose |
+| --- | --- | --- |
+| `POST /schemas`, `GET /schemas` | `schema.create`, `schema.read` | Register; list (filters `database_type`, `status`; `sort` = `name`, `updated_at`, `created_at`, `schema_version`; `order`) |
+| `GET`, `PATCH`, `DELETE /schemas/{id}` | read, update, delete | One source; edit name, description, type, dialect, active flag or glossary; delete with everything in it |
+| `POST`, `GET /schemas/{id}/tables` | update, read | Add a table (optionally with columns); list (filter `schema_name`) |
+| `GET`, `PATCH`, `DELETE /tables/{id}` | read, update, delete | A table with its columns; edit; delete (`?cascade_relationships=true` to delete the relationships using it) |
+| `POST`, `GET /tables/{id}/columns` | update, read | Add a column; list |
+| `PATCH`, `DELETE /columns/{id}` | update, delete | Edit; delete (`?cascade_relationships=true`) |
+| `POST`, `GET /schemas/{id}/relationships` | `schema.relationship.manage`, read | Add; list (filter `table_id`) |
+| `PATCH`, `DELETE /relationships/{id}` | `schema.relationship.manage` | Edit; delete |
+| `POST /schemas/{id}/import` | `schema.import` | JSON import with `strategy`, `dry_run`, `confirm_replace`, `expected_schema_version` ([format](docs/SCHEMA_IMPORT_FORMAT.md)) |
+| `GET /schemas/{id}/export` | `schema.export` | The metadata in the import format |
+| `GET /schemas/{id}/summary` | read | Counts and current validation issues |
+| `GET /schemas/{id}/version` | read | Current version and the change that produced it |
+| `GET /schemas/{id}/history` | read | Change history, newest first |
+| `GET /schemas/{id}/outline` | read | Every table and column in one response (for pickers) |
+| `GET /schemas/{id}/representation` | read | AI-ready structured metadata (filters `schema_name`, `table`, `include_related`, `include_sensitive`, `include_descriptions`, `include_business_terms`) |
+
+Errors specific to the registry: `422 SCHEMA_VALIDATION_FAILED` (details: the list of issues with code, message,
+location and severity), `409 IN_USE` (a relationship uses the table or column), `409 SCHEMA_VERSION_CONFLICT` (the
+schema changed since the preview), `409 CONFLICT` (duplicate name), `413 PAYLOAD_TOO_LARGE` and `422 JSON_TOO_DEEP`.
+
 
 ## Application database
 
@@ -424,24 +481,29 @@ backend/
     api/            deps.py (dependency providers, auth + permission dependencies), router.py, presenters.py,
                     routes/ (thin HTTP handlers: system, health, auth, users, settings)
     cli/            python -m app.cli (create-admin, reset-password)
+    schema_registry/ Pure schema-registry logic: validation, import planning, AI representation, data types, JSON limits
     core/           config.py, logging.py, exceptions.py, middleware.py, security.py (tokens),
                     authorization.py (permissions, policy), rate_limit.py, emails.py
     database/       base.py (Base), naming.py, session.py (engine, sessions), transaction.py, health.py
-    models/         SQLAlchemy models (mixins, application_setting, user, user_session, password_reset_token, auth_event)
+    models/         SQLAlchemy models (mixins, application_setting, user, user_session, password_reset_token, auth_event,
+                    rbac, schema_registry)
     repositories/   Data access (base, application settings, users, sessions, reset tokens)
     schemas/        Pydantic request/response contracts
     services/       Business logic and transaction boundaries (health, settings, auth, users, passwords, audit, bootstrap)
     main.py         Application factory and ASGI app
-  migrations/       Alembic environment and versions/ (0001: application_settings, 0002: authentication tables)
+  migrations/       Alembic environment and versions/ (0001: application_settings, 0002: authentication tables,
+                    0003: roles and permissions, 0004: schema registry)
   tests/            API and config tests; tests/database/ database layer; tests/auth/ authentication and users
 frontend/
   src/
     app/            App, providers, routes, navigation registry, breadcrumbs (route handles), lazy pages
     components/     ui/ design-system components; status cards, error boundary, brand mark
     design/         tokens.ts (breakpoints, z-index, durations mirrored from styles/tokens.css)
-    features/       auth/, permissions/, rbac/, users/, theme/ (provider, toggle), product/
+    features/       auth/, permissions/, rbac/, schemas/ (schema registry tabs, forms, validation), users/,
+                    theme/ (provider, toggle), product/
     layouts/        PublicLayout, AuthLayout, AppLayout, AdminLayout; shell/ (sidebar, top bar, menus)
-    pages/          Home, Login, ForgotPassword, ResetPassword, Account, Users, UserDetail, Roles, Permissions, NotFound
+    pages/          Home, Login, ForgotPassword, ResetPassword, Account, Users, UserDetail, Roles, Permissions,
+                    Schemas, SchemaDetail, NotFound
     services/       API client, auth session (in-memory token, refresh), typed auth/user/system calls
     hooks/          API client injection, status queries, document title
     types/          API contract types
