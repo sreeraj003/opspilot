@@ -80,15 +80,18 @@ class OpenAICompatibleProvider(LLMProvider):
         temperature: float,
         max_tokens: int,
         request_id: str,
+        json_output: bool = False,
     ) -> ProviderCompletion:
         api_key, base_url = self._require_configuration()
-        payload = {
+        payload: dict[str, object] = {
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
         }
+        if json_output and self.config.json_response_format:
+            payload["response_format"] = {"type": "json_object"}
         response = await self._send(
             "POST",
             f"{base_url}/chat/completions",

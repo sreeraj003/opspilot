@@ -41,6 +41,7 @@ SCHEMA_REGISTRY_TABLES = {
 }
 CONNECTOR_TABLES = {"external_api_connectors", "connector_audit_events"}
 AI_TABLES = {"ai_usage_records"}
+UNDERSTANDING_TABLES = {"business_terms", "question_understanding_events"}
 
 
 def test_alembic_ini_contains_no_database_url() -> None:
@@ -50,15 +51,16 @@ def test_alembic_ini_contains_no_database_url() -> None:
 def test_single_linear_history_starting_with_application_settings() -> None:
     script = ScriptDirectory.from_config(alembic_config("postgresql://unused@localhost/unused_test"))
 
-    assert script.get_heads() == ["0006"]
+    assert script.get_heads() == ["0007"]
     revisions = list(script.walk_revisions())
-    assert [r.revision for r in revisions] == ["0006", "0005", "0004", "0003", "0002", "0001"]
-    assert revisions[0].down_revision == "0005"
-    assert revisions[1].down_revision == "0004"
-    assert revisions[2].down_revision == "0003"
-    assert revisions[3].down_revision == "0002"
-    assert revisions[4].down_revision == "0001"
-    assert revisions[5].down_revision is None
+    assert [r.revision for r in revisions] == ["0007", "0006", "0005", "0004", "0003", "0002", "0001"]
+    assert revisions[0].down_revision == "0006"
+    assert revisions[1].down_revision == "0005"
+    assert revisions[2].down_revision == "0004"
+    assert revisions[3].down_revision == "0003"
+    assert revisions[4].down_revision == "0002"
+    assert revisions[5].down_revision == "0001"
+    assert revisions[6].down_revision is None
 
 
 def test_migration_files_follow_the_naming_scheme() -> None:
@@ -71,6 +73,7 @@ def test_migration_files_follow_the_naming_scheme() -> None:
         "2026_11_26_0004_create_schema_registry_tables.py",
         "2026_11_26_0005_create_external_api_connector_tables.py",
         "2026_11_26_0006_create_ai_usage_records.py",
+        "2026_11_26_0007_create_business_terms_and_question_understanding.py",
     ]
 
 
@@ -112,15 +115,27 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         command.upgrade(config, "head")
         assert _tables(engine) == {
             "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES,
-            *CONNECTOR_TABLES, *AI_TABLES,
+            *CONNECTOR_TABLES, *AI_TABLES, *UNDERSTANDING_TABLES,
         }
-        assert _current_revision(engine) == "0006"
+        assert _current_revision(engine) == "0007"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
         _assert_rbac_structure_and_seed(engine)
         _assert_schema_registry_structure(engine)
         _assert_connector_structure(engine)
         _assert_ai_structure(engine)
+        _assert_understanding_structure(engine)
+
+        command.downgrade(config, "0006")
+        assert _tables(engine) == {
+            "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES,
+            *CONNECTOR_TABLES, *AI_TABLES,
+        }
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT count(*) FROM permissions WHERE key LIKE 'business_term.%' OR key LIKE 'ai.question.%'")
+            ).scalar_one() == 0
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 6
 
         command.downgrade(config, "0005")
         assert _tables(engine) == {
@@ -128,7 +143,7 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         }
         with engine.connect() as connection:
             assert connection.execute(text("SELECT count(*) FROM permissions WHERE key LIKE 'ai.%'")).scalar_one() == 0
-            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 5
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 7
 
         command.downgrade(config, "0004")
         assert _tables(engine) == {
@@ -136,7 +151,7 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         }
         with engine.connect() as connection:
             assert connection.execute(text("SELECT count(*) FROM permissions WHERE key LIKE 'connector.%'")).scalar_one() == 0
-            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 6
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 8
 
         command.downgrade(config, "0003")
         assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES}
@@ -154,13 +169,14 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         assert _current_revision(engine) is None
 
         command.upgrade(config, "head")
-        assert _current_revision(engine) == "0006"
+        assert _current_revision(engine) == "0007"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
         _assert_rbac_structure_and_seed(engine)
         _assert_schema_registry_structure(engine)
         _assert_connector_structure(engine)
         _assert_ai_structure(engine)
+        _assert_understanding_structure(engine)
     finally:
         engine.dispose()
 
@@ -260,8 +276,8 @@ def _assert_rbac_structure_and_seed(engine: Engine) -> None:
             )
         ).scalar_one()
         assert admin_permissions == len(SYSTEM_PERMISSIONS)
-        # 1 from 0003, incremented by 0004 (schema), 0005 (connector) and 0006 (AI permissions).
-        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 4
+        # 1 from 0003, incremented by 0004 (schema), 0005 (connector), 0006 (AI) and 0007 (understanding).
+        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 5
         # Only built-in rows: no business roles or permissions are hard-coded.
         assert connection.execute(text("SELECT count(*) FROM roles WHERE NOT is_system")).scalar_one() == 0
         assert connection.execute(text("SELECT count(*) FROM permissions WHERE NOT is_system")).scalar_one() == 0
@@ -324,4 +340,21 @@ def _assert_ai_structure(engine: Engine) -> None:
     with engine.connect() as connection:
         assert connection.execute(text("SELECT count(*) FROM ai_usage_records")).scalar_one() == 0
         keys = set(connection.execute(text("SELECT key FROM permissions WHERE key LIKE 'ai.%'")).scalars())
-        assert keys == {"ai.provider.read", "ai.provider.test", "ai.usage.read"}
+        assert keys == {"ai.provider.read", "ai.provider.test", "ai.usage.read", "ai.question.understand", "ai.question.preview"}
+
+
+def _assert_understanding_structure(engine: Engine) -> None:
+    inspector = inspect(engine)
+    terms = {c["name"] for c in inspector.get_columns("business_terms")}
+    assert {"schema_source_id", "name", "description", "kind", "synonyms", "related_tables", "related_columns",
+            "default_aggregation", "aggregation_guidance", "is_active", "deleted_at"} <= terms
+    events = {c["name"] for c in inspector.get_columns("question_understanding_events")}
+    assert {"request_id", "user_id", "schema_source_id", "schema_version", "provider", "model", "latency_ms",
+            "intent_type", "confidence", "status", "requires_clarification", "validation_outcome", "error_category"} <= events
+    # Outcome metadata only: no question text, prompt, answer or credential.
+    assert not events & {"question", "prompt", "messages", "content", "response", "api_key", "credential", "permissions"}
+    with engine.connect() as connection:
+        keys = set(connection.execute(
+            text("SELECT key FROM permissions WHERE key LIKE 'business_term.%' OR key LIKE 'ai.question.%'")
+        ).scalars())
+        assert keys == {"ai.question.understand", "ai.question.preview", "business_term.read", "business_term.manage"}

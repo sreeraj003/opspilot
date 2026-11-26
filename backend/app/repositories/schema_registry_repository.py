@@ -137,6 +137,13 @@ class SchemaSourceRepository(BaseRepository[SchemaSource]):
         statement = self._select().where(SchemaSource.id == source_id).with_for_update()
         return (await self.session.execute(statement)).scalar_one_or_none()
 
+    async def active_sources(self, *, limit: int = 200) -> Sequence[SchemaSource]:
+        """Active, live sources by name (question understanding offers these)."""
+        statement = (
+            self._select().where(SchemaSource.is_active.is_(True)).order_by(func.lower(SchemaSource.name), SchemaSource.id).limit(limit)
+        )
+        return (await self.session.execute(statement)).scalars().all()
+
     async def name_taken(self, name: str, *, exclude_id: uuid.UUID | None = None) -> bool:
         statement = self._select().where(func.lower(SchemaSource.name) == name.lower())
         if exclude_id is not None:

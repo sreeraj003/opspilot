@@ -14,7 +14,10 @@ from app.ai.config.provider_config import ProviderConfigService
 from app.ai.services.llm_service import LLMService
 from app.ai.services.provider_admin_service import ProviderAdminService
 from app.ai.services.usage_service import UsageService
-from app.api.deps import DbSessionDep, SettingsDep
+from app.ai.understanding.services.terminology_service import TerminologyService
+from app.ai.understanding.services.timezone_service import BusinessTimezoneService
+from app.ai.understanding.services.understanding_service import QuestionUnderstandingService
+from app.api.deps import AuthorizationEngineDep, DbSessionDep, SchemaRegistryServiceDep, SettingsDep
 
 
 def get_provider_config_service(settings: SettingsDep) -> ProviderConfigService:
@@ -52,3 +55,33 @@ def get_provider_admin_service(
 
 
 ProviderAdminServiceDep = Annotated[ProviderAdminService, Depends(get_provider_admin_service)]
+
+
+# --- question understanding and business terminology (Module 09) ------------------------------------------
+
+
+def get_terminology_service(session: DbSessionDep, schemas: SchemaRegistryServiceDep) -> TerminologyService:
+    return TerminologyService(session, schemas)
+
+
+TerminologyServiceDep = Annotated[TerminologyService, Depends(get_terminology_service)]
+
+
+def get_business_timezone_service(session: DbSessionDep, settings: SettingsDep) -> BusinessTimezoneService:
+    return BusinessTimezoneService(session, settings)
+
+
+def get_question_understanding_service(
+    session: DbSessionDep,
+    settings: SettingsDep,
+    llm: LLMServiceDep,
+    terminology: TerminologyServiceDep,
+    engine: AuthorizationEngineDep,
+    timezone: Annotated[BusinessTimezoneService, Depends(get_business_timezone_service)],
+) -> QuestionUnderstandingService:
+    return QuestionUnderstandingService(
+        session, settings=settings, llm=llm, terminology=terminology, engine=engine, timezone=timezone
+    )
+
+
+QuestionUnderstandingServiceDep = Annotated[QuestionUnderstandingService, Depends(get_question_understanding_service)]

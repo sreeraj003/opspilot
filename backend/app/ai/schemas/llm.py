@@ -63,6 +63,9 @@ class LLMGenerationRequest(BaseModel):
     max_tokens: Annotated[int | None, Field(ge=1, le=MAX_OUTPUT_TOKENS_LIMIT)] = None
     # Use another model of the active provider for this request only.
     model: Annotated[str | None, Field(pattern=MODEL_NAME_PATTERN)] = None
+    # "json_object" asks the provider for a JSON object where the provider supports it
+    # (AI_JSON_RESPONSE_FORMAT). Callers must still validate the content themselves.
+    response_format: Literal["text", "json_object"] = "text"
     # Caller context for logs and usage records (for example {"feature": "sql_generation"}).
     # Simple values only; never prompt text or secrets.
     metadata: dict[str, MetadataValue] = Field(default_factory=dict)
