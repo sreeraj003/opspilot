@@ -7,4 +7,6 @@ export const UserDetailPage = lazy(() => import("@/pages/UserDetailPage").then((
 export const RolesPage = lazy(() => import("@/pages/RolesPage").then((m) => ({ default: m.RolesPage })));
 export const RoleDetailPage = lazy(() => import("@/pages/RoleDetailPage").then((m) => ({ default: m.RoleDetailPage })));
 export const PermissionsPage = lazy(() => import("@/pages/PermissionsPage").then((m) => ({ default: m.PermissionsPage })));
+export const SchemasPage = lazy(() => import("@/pages/SchemasPage").then((m) => ({ default: m.SchemasPage })));
+export const SchemaDetailPage = lazy(() => import("@/pages/SchemaDetailPage").then((m) => ({ default: m.SchemaDetailPage })));
 export const PermissionEditorPage = lazy(() => import("@/pages/PermissionEditorPage").then((m) => ({ default: m.PermissionEditorPage })));

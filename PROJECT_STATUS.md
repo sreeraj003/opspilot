@@ -2,13 +2,124 @@
 
 ## Current module
 
-**Module 05: Frontend foundation and design system.** Implemented and verified on 2026-11-25. Awaiting the project
-owner's review. Module 06 has not been started.
+**Module 06: External schema registry and metadata management.** Implemented and verified on 2026-11-26. Awaiting
+the project owner's review. Module 07 has not been started.
 
-Single installation, single organisation: no tenant model. Modules 01 to 04 keep their behaviour: the frontend was
-consolidated, not rebuilt, and no backend code changed. Earlier records are kept below.
+Built on top of the Module 05 branch (not yet merged into `main` when this module started). Single installation,
+single organisation: no tenant model. Modules 01 to 05 keep their behaviour. Earlier records are kept below.
 
-## Module 05: what was implemented
+## Module 06: what was implemented
+
+References: [docs/SCHEMA_IMPORT_FORMAT.md](docs/SCHEMA_IMPORT_FORMAT.md), ARCHITECTURE.md section 7, README
+"Schema registry".
+
+- **Models** (`app/models/schema_registry.py`): `SchemaSource`, `SchemaTable`, `SchemaColumn`, `SchemaRelationship`
+  (soft-deleted, unique names among live rows, identifier, type and key check constraints) and the append-only
+  `SchemaChangeEvent`.
+- **Versioning**: every metadata change increases `schema_version` by one and records a summary and a field-level
+  diff, with the actor. Reads never change the version; an import is one version.
+- **Validation service** (`app/schema_registry/validation.py`), outside the routes: identifiers, the data-type
+  vocabulary, duplicates, nullable primary keys, dangling, self-referencing, duplicate (either direction) and
+  type-incompatible relationships, and size limits are errors; tables without columns or primary keys, foreign keys
+  without relationships, relationships to non-key columns and inactive ends are warnings. A write is refused only for
+  errors it introduces.
+- **Referential protection**: tables and columns used by relationships cannot be deleted unless the relationships are
+  deleted in the same transaction (`cascade_relationships=true`).
+- **JSON import** with Pydantic validation (`extra="forbid"`), byte and nesting-depth limits, `create_only`, `merge`
+  (only fields present) and `replace` (needs `confirm_replace`) strategies, dry-run preview with counts, changes,
+  errors and warnings, optimistic `expected_schema_version`, one transaction. **Export** in the same format.
+- **AI-ready representation** (`GET /schemas/{id}/representation`): structured, deterministic, active metadata only;
+  sensitive columns excluded by default; no internal ids, timestamps or users. No prompts, embeddings or RAG.
+- **Permissions**: `schema.read`, `schema.create`, `schema.update`, `schema.delete`, `schema.import`,
+  `schema.export`, `schema.relationship.manage`, as Module 04 system permissions (delegable, granted to the
+  Administrator role by the migration). No role names in code.
+- **Policy catalog**: Module 04's `SchemaCatalog` is now implemented from the registry, so `database_data` policies
+  naming unknown tables or columns, or comparing a column with a wrongly typed value, are rejected once tables are
+  registered.
+- **Frontend**: Schemas list (search, database-type and status filters, sort, pagination, real counts, register, edit,
+  delete) and a Schema page with Overview, Tables (table explorer with PK, FK, sensitive and inactive markers; table
+  and column forms), Relationships (form with client-side validation), Import / Export (file, local check, strategy,
+  preview, confirmation, success and failure summaries, JSON download) and Schema History tabs. Navigation item
+  "Schemas" under Administration, shown with `schema.read`; every action shown only with its permission.
+
+### Tables
+
+`schema_sources`, `schema_tables`, `schema_columns`, `schema_relationships`, `schema_change_events`.
+
+### Migrations
+
+`0004_create_schema_registry_tables` (`2026_11_26_0004_create_schema_registry_tables.py`): creates the five tables and
+their constraints and indexes, inserts the seven `schema.*` permissions, grants them to the Administrator role and
+bumps the authorization revision. `downgrade()` removes them again. Docker Compose applies it on start; elsewhere
+run `alembic upgrade head`.
+
+### API endpoints (under `/api/v1`)
+
+`POST/GET /schemas`; `GET/PATCH/DELETE /schemas/{id}`; `POST/GET /schemas/{id}/tables`; `GET/PATCH/DELETE
+/tables/{id}`; `POST/GET /tables/{id}/columns`; `PATCH/DELETE /columns/{id}`; `POST/GET /schemas/{id}/relationships`;
+`PATCH/DELETE /relationships/{id}`; `POST /schemas/{id}/import`; `GET /schemas/{id}/export`, `/summary`, `/version`,
+`/history`, `/outline`, `/representation`. Permissions per endpoint are listed in the README.
+
+### Frontend pages and components
+
+Pages `SchemasPage`, `SchemaDetailPage`; `features/schemas/` `OverviewTab`, `TablesTab`, `RelationshipsTab`
+(+ `RelationshipFormDialog`), `ImportExportTab` (+ `ImportResultSummary`), `HistoryTab`, `components.tsx`
+(`ColumnFlags`, `DatabaseTypeLabel`, `IssueList`, `MutationError`, `SchemaFormDialog`, `TableFormDialog`,
+`ColumnFormDialog`), `hooks.ts`, `validation.ts`; `services/schemaService.ts`; `types/schemaRegistry.ts`. All built
+from the Module 05 components.
+
+### New configuration
+
+`SCHEMA_IMPORT_MAX_BYTES` (5 MiB), `SCHEMA_IMPORT_MAX_DEPTH` (10), `SCHEMA_MAX_TABLES` (2000),
+`SCHEMA_MAX_COLUMNS_PER_TABLE` (1000), `SCHEMA_MAX_RELATIONSHIPS` (5000), in `.env.example` and
+`docker-compose.yml`. No new dependencies.
+
+### Commands executed and results (Module 06)
+
+| Command | Result |
+| --- | --- |
+| `pytest -q` with `TEST_DATABASE_URL` (PostgreSQL 16) | **454 passed** (364 before; 90 added, 4 updated for the new permissions, tables and migration head) |
+| `pytest -q` without a test database | 214 passed, 240 skipped (database tests) |
+| `alembic upgrade head`, `alembic check`, `alembic downgrade -1`, `alembic upgrade head` | OK (also covered by `tests/database/test_migrations.py`) |
+| `npx vitest run` | **178 passed** in 28 files (151 before; 27 added in 3 new files, 1 updated to allow dotted permission keys) |
+| `npx tsc -b` | OK, no errors |
+| `npm run lint` | OK, 0 errors, 0 warnings |
+| `npm run build` | OK; schema detail page 32 kB (9 kB gzip), schemas list page lazy-loaded; no chunk-size warning |
+
+Backend tests added: source CRUD, search, filters, sorting, pagination and unique names; every permission, including
+403s and delegation through a custom role; table, column and relationship CRUD and validation; referential
+protection and cascade; soft deletes and re-registration; versioning (once per change, never on reads) and history
+summaries; import strategies, dry runs, replace confirmation, version conflicts, rollback on failure, size, depth and
+count limits, unknown fields, unsafe names and types, the documented example; export round trip; representation
+contents, exclusions and filters; policy checks against registered schemas; 48 unit tests of the validator, importer
+and data types. Frontend tests added: list rendering, search and filters, permission-based visibility, loading,
+empty, error and 403 states, registering a schema, overview, table explorer indicators, column form validation,
+delete with relationships, relationship form validation (pure and in the dialog), import preview, validation errors,
+invalid files, confirmed replace import, history, missing schema.
+
+Not run in Module 06: a native Windows run, Docker Compose (see Known issues), and a browser walkthrough of the new
+pages.
+
+### Known limitations
+
+- **Metadata is entered or imported, not discovered.** OpsPilot does not connect to business databases, so it cannot
+  detect drift between the registry and the real database.
+- **Business glossary** is shown read-only in the web app and maintained through JSON import or `PATCH
+  /schemas/{id}`.
+- **Quoted identifiers** (names with spaces or punctuation) are not supported, by design.
+- **Data types** come from a fixed vocabulary; a type outside it must be registered under a supported name.
+- **Relationships** are between single columns; composite foreign keys are registered as one relationship per column
+  pair.
+- **Policy checks**: once any table is registered, `database_data` policies must name registered tables. Policies
+  saved before registration are not re-checked; tables registered under several sources with the same name are
+  accepted under any of them.
+- **Client-side duplicate check** in the relationship form looks at up to 100 existing relationships; the server
+  checks all of them.
+- **History** is per schema; it is not yet shown in the Module 04 audit views.
+
+## Module 05 record
+
+### What was implemented
 
 Reference: [docs/FRONTEND_DESIGN_SYSTEM.md](docs/FRONTEND_DESIGN_SYSTEM.md) and ARCHITECTURE.md section 6.
 
@@ -46,13 +157,13 @@ Reference: [docs/FRONTEND_DESIGN_SYSTEM.md](docs/FRONTEND_DESIGN_SYSTEM.md) and 
 - **Tooling**: ESLint 9 (typescript-eslint, react-hooks 7, jsx-a11y, react-refresh) added with `npm run lint`;
   administration pages are lazy-loaded and vendor code is split into chunks (no more chunk-size warning).
 
-### New dependencies (frontend, dev only)
+#### New dependencies (frontend, dev only)
 
 `eslint` 9.39.5, `@eslint/js` 9.39.5, `typescript-eslint` 8.74.0, `eslint-plugin-react-hooks` 7.1.1,
 `eslint-plugin-react-refresh` 0.5.8, `eslint-plugin-jsx-a11y` 6.10.2, `globals` 17.14.0. No runtime dependencies were
 added: React Hook Form and Zod were already present; Recharts is not needed until a module draws charts.
 
-### Commands executed and results (Module 05)
+#### Commands executed and results (Module 05)
 
 | Command | Result |
 | --- | --- |
@@ -74,7 +185,7 @@ authentication, public and session-check layouts; user edit dialog and validatio
 Not run in Module 05: backend tests (no backend file changed; Module 04's results stand), a native Windows run,
 Docker Compose, real screen readers, and cross-browser checks beyond Chromium.
 
-### Known limitations
+#### Known limitations
 
 - **The interface only decides what to show.** Hidden buttons and navigation are not authorization; the backend
   enforces every permission.
@@ -590,4 +701,4 @@ Documentation
 
 ## Next module
 
-Module 06, as defined by the project owner. Not started: waiting for review and approval of Module 05.
+Module 07, as defined by the project owner. Not started: waiting for review and approval of Module 06.

@@ -523,7 +523,99 @@ The full reference is [docs/FRONTEND_DESIGN_SYSTEM.md](docs/FRONTEND_DESIGN_SYST
 The interface only decides what to show. Authentication tokens are handled exactly as in section 4.7, and every
 permission is enforced by the backend.
 
-## 7. External GET SQL API integration (planned)
+## 7. External schema registry (Module 06)
+
+### 7.1 Purpose and boundary
+
+The registry stores **metadata** about the company's business databases (schema sources, tables, columns,
+relationships, a business glossary) so that later modules can plan queries. It stores no credentials, opens no
+connections and never executes anything from imported metadata. Names are plain identifiers and data types come from
+a fixed vocabulary (`app/schema_registry/data_types.py`), so text from an import cannot become SQL later.
+
+### 7.2 Data model
+
+| Table | Holds | Notable constraints |
+| --- | --- | --- |
+| `schema_sources` | One registered database: name, description, `database_type`, `dialect`, `schema_version`, `metadata_updated_at`, `business_glossary` (JSONB), `is_active`, `created_by` | Unique `lower(name)` among live rows; `database_type` check; version ≥ 1 |
+| `schema_tables` | `schema_name`, `table_name`, description, business purpose, `is_active` | Unique `(source, lower(schema_name), lower(table_name))` among live rows; identifier checks |
+| `schema_columns` | `column_name`, normalised `data_type`, description, business meaning, PK/FK/nullable/sensitive/active flags, `ordinal_position` | Unique `lower(column_name)` per table among live rows; a primary key cannot be nullable |
+| `schema_relationships` | Source and target table and column, `relationship_type`, description, `is_active` | Type check; source column ≠ target column; unique pair among live rows |
+| `schema_change_events` | Append-only history: event type, entity, `schema_version`, `version_incremented`, summary, structured details, actor | Never updated or deleted |
+
+Sources, tables, columns and relationships use the soft-delete mixin: deleting keeps the row (with `deleted_at`) and
+its history, and uniqueness applies only to live rows, so a name can be registered again. Migration
+`0004_create_schema_registry_tables` creates the tables and seeds the seven `schema.*` permissions, granted to the
+Administrator role.
+
+### 7.3 Layers
+
+- `app/schema_registry/` holds the pure logic, with no database access: `validation.py` (`validate_schema_state`
+  checks a whole schema state and returns structured issues), `importer.py` (`plan_import`), `representation.py`
+  (`build_representation`), `data_types.py`, `json_limits.py` (byte and depth limits for the raw body) and
+  `catalog.py` (the policy `SchemaCatalog`).
+- `SchemaRegistryRepository` classes query and flush; `SchemaRegistryService` owns transactions. Each write locks the
+  source row (`SELECT … FOR UPDATE`), builds the schema state before and after the change, validates it, and refuses
+  the change only for **errors the change introduces** (`422 SCHEMA_VALIDATION_FAILED` with the issues as details).
+  Pre-existing problems and warnings never block an unrelated edit.
+- Routes in `app/api/routes/schema_registry.py` are thin: parse, check the permission, call the service.
+
+### 7.4 Versioning and history
+
+Every change that alters the metadata a query planner would see (tables, columns, relationships, `database_type`,
+`dialect`, glossary) increases `schema_version` by exactly one and writes one change event with a human-readable
+summary and a field-level `from`/`to` diff. Renaming the source, editing its description or toggling `is_active` is
+recorded without a version bump. Reads never change the version. Exports are recorded (without a bump) so the history
+shows who took the metadata out. An import is one version and one event, however many items it changes.
+
+### 7.5 Referential protection
+
+A table or column used by a relationship cannot be deleted (`409 IN_USE`, details list the relationship ids) unless the
+request asks for `cascade_relationships=true`, in which case the relationships are deleted in the same transaction and
+recorded. Deleting a source deletes its tables, columns and relationships with it.
+
+### 7.6 JSON import and export
+
+The format is documented in [docs/SCHEMA_IMPORT_FORMAT.md](docs/SCHEMA_IMPORT_FORMAT.md). The route reads the raw body
+with a byte limit, parses it with a nesting-depth limit, validates the envelope, then validates the document with
+Pydantic (`extra="forbid"` everywhere). `plan_import` compares the document with the current state and produces the
+list of creates, updates and removals for the chosen strategy (`create_only`, `merge`, `replace`). The planned state is
+validated like any other change. A dry run returns the plan; a real import applies it in one transaction (tables, then
+columns, then relationships) or not at all. `expected_schema_version` turns a stale preview into `409
+SCHEMA_VERSION_CONFLICT`, and `replace` requires `confirm_replace`. Export writes the same format.
+
+### 7.7 AI-ready representation
+
+`GET /schemas/{id}/representation` returns a structured, deterministic description of the active metadata: tables
+with their columns (name, type, nullability, keys, description, business meaning), relationships, and business terms,
+stamped with `schema_version`. It leaves out inactive items, relationships whose ends are inactive, sensitive columns
+(unless `include_sensitive=true`), and every internal field (ids, timestamps, users). Filters: `schema_name`, `table`
+(with `include_related` to add directly related tables), `include_descriptions`, `include_business_terms`. It is input
+for a later planning module, not a prompt; there are no embeddings and no retrieval.
+
+### 7.8 Permissions
+
+Seven system permissions, all delegable to any role through Module 04: `schema.read` (every read endpoint except
+export), `schema.create`, `schema.update` (source, tables and columns), `schema.delete`, `schema.import`,
+`schema.export` and `schema.relationship.manage`. No role names are checked anywhere.
+
+Module 04's permission policies name tables and columns. `RegistrySchemaCatalog` implements its `SchemaCatalog`
+protocol from the active tables and columns of active sources: once at least one is registered, a policy that names an unknown table or
+column, or compares a column with a value of the wrong type, is rejected when it is saved. With nothing registered
+the catalog is empty and policies are accepted as before.
+
+### 7.9 Frontend
+
+**Schemas** (`/admin/schemas`, needs `schema.read`): list with search, database-type and status filters, sorting,
+pagination and real counts; register, edit and delete dialogs. **Schema** (`/admin/schemas/:id`) has tabs:
+*Overview* (counts, details, live metadata checks, glossary), *Tables* (table list with filters and a column explorer
+with PK, FK, sensitive and inactive markers; add, edit and delete tables and columns, with a second confirmation
+when relationships would be deleted too), *Relationships* (list and a dialog that checks the draft before sending it:
+required fields, inactive ends, self-reference, type compatibility, duplicates in either direction),
+*Import / Export* (file selection, local JSON and size check, strategy, server-side preview with counts, changes,
+errors and warnings, confirmation, result summary, JSON download), and *Schema History*. Every action is shown only
+with its permission; the server enforces each request.
+
+## 8. External GET SQL API integration (planned)
 
 OpsPilot does not connect to the company's business database. The company already has a backend endpoint that
 accepts SQL as a query parameter and returns results:
@@ -541,7 +633,7 @@ OpsPilot will:
 
 The company keeps full control: its API decides which database user runs the query and can add its own limits.
 
-## 8. Planned modular backend architecture
+## 9. Planned modular backend architecture
 
 The backend is a modular monolith. Each business module adds its own routes, schemas, services and models in
 the existing layers:
@@ -574,7 +666,7 @@ Planned modules (subject to the project owner's sequencing):
 Rules for every module: route handlers stay thin, logic lives in services, persistence lives in repositories,
 dependencies are injected through `app/api/deps.py`, and no module imports another module's routes.
 
-## 9. Planned SQL security execution pipeline
+## 10. Planned SQL security execution pipeline
 
 Generated SQL is untrusted input. Before anything reaches the company API it passes a pipeline that is
 independent of the LLM and cannot be skipped:

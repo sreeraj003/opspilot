@@ -47,7 +47,8 @@ describe("navigation registry", () => {
 
   it("never refers to role names", () => {
     const keys = navigation.flatMap((s) => s.items.flatMap((i) => [i.permission, ...(i.anyPermission ?? [])])).filter(Boolean);
-    for (const key of keys) expect(key).toMatch(/^[a-z_]+:[a-z_]+$/);
+    // Permission keys: "resource:action" (Modules 03-04) or dotted keys such as "schema.read" (Module 06).
+    for (const key of keys) expect(key).toMatch(/^[a-z_]+([:.][a-z_]+)+$/);
   });
 });
 

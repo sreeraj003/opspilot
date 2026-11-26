@@ -77,6 +77,13 @@ export const ADMIN_PERMISSIONS: Permission[] = [
   "settings:read",
   "users:manage",
   "users:read",
+  "schema.read",
+  "schema.create",
+  "schema.update",
+  "schema.delete",
+  "schema.import",
+  "schema.export",
+  "schema.relationship.manage",
 ];
 
 export function makeCurrentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {

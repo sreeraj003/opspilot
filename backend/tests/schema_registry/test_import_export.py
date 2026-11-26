@@ -276,3 +276,24 @@ def test_export_round_trips_and_is_audited(registry: Registry) -> None:
     copy = registry.ok(registry.get(f"/schemas/{copy_id}/export"))
     for key in ("tables", "relationships", "business_glossary"):
         assert copy[key] == exported[key]
+
+
+def test_the_documented_example_imports_cleanly(registry: Registry) -> None:
+    """docs/SCHEMA_IMPORT_FORMAT.md's complete example must stay valid."""
+    import re
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / "docs" / "SCHEMA_IMPORT_FORMAT.md"
+    if not path.is_file():  # e.g. inside the backend container, which holds only backend/
+        pytest.skip("docs/ is not available here")
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"```json\n(.*?)```", text, re.S)
+    assert match is not None
+    document = json.loads(match.group(1))
+    schema_id = registry.create_schema("Docs example")["id"]
+    result = registry.ok(registry.import_document(schema_id, document))
+    assert result["valid"] is True and result["errors"] == [] and result["warnings"] == []
+    assert result["counts"]["tables"]["created"] == 3
+    assert result["counts"]["columns"]["created"] == 14
+    assert result["counts"]["relationships"]["created"] == 2
+    assert result["counts"]["glossary_terms"]["created"] == 2
