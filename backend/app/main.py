@@ -10,6 +10,8 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.ai.config.provider_config import ProviderConfigService
+from app.ai.providers.http import create_ai_http_client
 from app.api.router import api_router
 from app.authorization.cache import AuthorizationCache
 from app.connectors.adapters.http_client import ConnectorHttpClient
@@ -48,6 +50,19 @@ def _build_lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncCont
             transport=getattr(app.state, "connector_transport", None),
         )
         app.state.connector_http = connector_http
+        # Module 08: one pooled HTTP client shared by every AI provider. Tests may set
+        # app.state.ai_transport (a mock transport) before startup.
+        ai_http = create_ai_http_client(transport=getattr(app.state, "ai_transport", None))
+        app.state.ai_http = ai_http
+        active_ai = ProviderConfigService(settings).active()
+        if active_ai.configured:
+            logger.info("AI provider configured", extra={"provider": active_ai.name, "model": active_ai.model})
+        else:
+            # Not an error: the application runs without AI; the provider reports "not configured".
+            logger.warning(
+                "AI provider is not configured; AI features are unavailable",
+                extra={"provider": active_ai.name, "missing_settings": ", ".join(active_ai.missing_settings)},
+            )
         if app.state.connector_cipher is None:
             logger.warning("CONNECTOR_ENCRYPTION_KEY is not set; connector credentials can be neither stored nor used")
         logger.info(
@@ -59,6 +74,8 @@ def _build_lifespan(settings: Settings) -> Callable[[FastAPI], AbstractAsyncCont
         finally:
             await connector_http.aclose()
             app.state.connector_http = None
+            await ai_http.aclose()
+            app.state.ai_http = None
             if database is not None:
                 await database.dispose()
             logger.info("Application stopped")

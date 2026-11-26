@@ -35,7 +35,7 @@ CSRF = {"X-OpsPilot-CSRF": "1"}
 AUTH_TABLES = (
     "auth_events, retired_refresh_tokens, user_sessions, password_reset_tokens, users, "
     "rbac_audit_events, user_permissions, user_roles, role_permissions, roles, permissions, "
-    "connector_audit_events, external_api_connectors, "
+    "connector_audit_events, external_api_connectors, ai_usage_records, "
     "schema_change_events, schema_relationships, schema_columns, schema_tables, schema_sources"
 )
 

@@ -626,7 +626,7 @@ OpsPilot does not connect to the company's business database and stores no datab
 exposes an HTTPS GET endpoint that takes SQL as a query parameter and returns JSON. A connector stores how to
 call it, and the backend calls it with HTTPX. No public endpoint accepts SQL: the connection test takes no body
 and sends a fixed statement, and execution is reachable only in-process through a sealed `ValidatedQueryRequest`
-(8.6). SQL generation and the SQL security guard (section 10) are later modules.
+(8.6). SQL generation and the SQL security guard (section 11) are later modules.
 
 ### 8.2 Data model
 
@@ -738,7 +738,73 @@ page and cannot be tested or used.
   result, Activate/Deactivate, Edit, Delete with confirmation, and the audit activity. Each action appears only with
   its permission.
 
-## 9. Planned modular backend architecture
+## 9. AI provider integration and LLM service layer (Module 08)
+
+The full guide (NVIDIA setup, variables, error table, adding a provider, testing) is
+[docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md). This section covers the design.
+
+### 9.1 Boundary
+
+Every call to a language model goes through `LLMService` (`app/ai/services/llm_service.py`). Application modules
+depend on `LLMServiceDep` and on the provider-independent schemas (`LLMMessage`, `LLMGenerationRequest`,
+`LLMGenerationResponse`); they never import a provider, a vendor SDK or HTTPX. Module 08 adds no SQL generation, SQL
+execution, retrieval, embeddings or chat. No endpoint accepts prompt text.
+
+### 9.2 Layers
+
+```
+app/api/routes/ai.py                 thin admin handlers, require_permission(ai.*)
+app/ai/services/provider_admin_service.py   configuration views, health, fixed test prompt, audit, usage page
+app/ai/services/llm_service.py       selection, validation, defaults/ceilings, bounded retries, latency, logging, usage
+app/ai/services/usage_service.py     ai_usage_records writes (own transaction) and queries
+app/ai/providers/base.py             LLMProvider: generate(), health_check()
+app/ai/providers/openai_compatible.py  HTTPX adapter: POST /chat/completions, GET /models, error mapping, normalisation
+app/ai/providers/nvidia.py           NVIDIA = OpenAI-compatible adapter with NVIDIA's name
+app/ai/providers/registry.py         name -> implementation
+app/ai/providers/http.py             the one pooled httpx.AsyncClient (lifespan-managed)
+app/ai/config/provider_config.py     ProviderConfigService: Settings -> ProviderConfig per provider
+app/ai/exceptions/errors.py          typed ProviderError hierarchy (AppError subclasses, fixed safe messages)
+```
+
+### 9.3 Configuration and credentials
+
+There is one configuration system: `Settings` (`app/core/config.py`). `ProviderConfigService` turns it into a
+`ProviderConfig` per provider (name, model, base URL, credential reference, temperature, max output tokens, timeout,
+retry limits, active flag, missing settings) without reading the environment itself. API keys exist only as
+`SecretStr` in the server environment; they are not stored in the database (so nothing is stored in plaintext), are
+excluded from `repr`, are never returned (responses show `credential.configured` and the variable name) and are never
+logged. Configuration changes are made in `.env` by whoever administers the host; no API changes them. With no key the
+application starts and the provider reports `not_configured`. Storing provider credentials in the database later
+would reuse the Module 07 AES-256-GCM `CredentialCipher`.
+
+### 9.4 Request lifecycle
+
+1. Validate and build an `LLMGenerationRequest` (422 `AI_REQUEST_INVALID` with locations only, never input).
+2. Select the active provider; a missing key, model or HTTP client is `ProviderConfigurationError` (503).
+3. End the caller's implicit database read transaction, so no pooled connection is held during the call.
+4. Call the provider. On a retryable error (connection never established, 429, 502, 503), wait (exponential backoff
+   with jitter, or the provider's `Retry-After`) and try again, up to `AI_MAX_RETRIES`, never waiting longer than
+   `AI_RETRY_MAX_WAIT_SECONDS`. Authentication errors, invalid requests, malformed responses and timeouts after the
+   request was sent are not retried.
+5. Normalise the answer to `LLMGenerationResponse`, record one usage row (success or failure) and log the outcome.
+
+### 9.5 Usage and audit
+
+`ai_usage_records` (migration `0006`) holds one row per request: provider, model, operation, status, error
+category, finish reason, provider-reported input/output/total tokens (NULL when not reported), latency, attempts,
+OpsPilot request id, HTTP correlation id, provider request id, user. No prompt, answer, key or cost. Indexes serve the
+newest-first list (`created_at`) and the provider filter (`provider, created_at`). Usage storage failures are logged
+and do not fail the request. Running the provider test is also written to the audit trail as `ai_provider_tested`.
+
+### 9.6 Permissions and frontend
+
+`ai.provider.read`, `ai.provider.test` and `ai.usage.read` are delegable system permissions, seeded and granted to
+Administrator by migration `0006`. **AI provider** (`/admin/ai`, shown with any of them) has a configuration card
+(model, endpoint, "Set on server, hidden" key status), a health card, a connection-test card (fixed prompt, result,
+latency, reported usage) and a usage table with totals. Each part appears only with its permission; the server
+enforces every request.
+
+## 10. Planned modular backend architecture
 
 The backend is a modular monolith. Each business module adds its own routes, schemas, services and models in
 the existing layers:
@@ -763,7 +829,7 @@ Planned modules (subject to the project owner's sequencing):
 | Roles and permissions | **Implemented (Module 04, section 5)** |
 | Schema registry | **Implemented (Module 06, section 7)** |
 | External API integration | **Implemented (Module 07, section 8)** |
-| LLM integration | NVIDIA-hosted model client (`NVIDIA_BASE_URL`, `NVIDIA_MODEL`, `NVIDIA_API_KEY`) |
+| LLM integration | **Implemented (Module 08, section 9)** |
 | SQL generation | Question + relevant schemas → candidate SQL |
 | SQL security guard | Independent validation and authorization of generated SQL |
 | Conversations and answers | Chat history, natural-language answers, charts (Recharts) |
@@ -771,7 +837,7 @@ Planned modules (subject to the project owner's sequencing):
 Rules for every module: route handlers stay thin, logic lives in services, persistence lives in repositories,
 dependencies are injected through `app/api/deps.py`, and no module imports another module's routes.
 
-## 10. Planned SQL security execution pipeline
+## 11. Planned SQL security execution pipeline
 
 Generated SQL is untrusted input. Before anything reaches the company API it passes a pipeline that is
 independent of the LLM and cannot be skipped:

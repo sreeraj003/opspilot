@@ -90,6 +90,9 @@ export const ADMIN_PERMISSIONS: Permission[] = [
   "connector.delete",
   "connector.test",
   "connector.activate",
+  "ai.provider.read",
+  "ai.provider.test",
+  "ai.usage.read",
 ];
 
 export function makeCurrentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {

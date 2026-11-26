@@ -40,6 +40,7 @@ SCHEMA_REGISTRY_TABLES = {
     "schema_change_events",
 }
 CONNECTOR_TABLES = {"external_api_connectors", "connector_audit_events"}
+AI_TABLES = {"ai_usage_records"}
 
 
 def test_alembic_ini_contains_no_database_url() -> None:
@@ -49,14 +50,15 @@ def test_alembic_ini_contains_no_database_url() -> None:
 def test_single_linear_history_starting_with_application_settings() -> None:
     script = ScriptDirectory.from_config(alembic_config("postgresql://unused@localhost/unused_test"))
 
-    assert script.get_heads() == ["0005"]
+    assert script.get_heads() == ["0006"]
     revisions = list(script.walk_revisions())
-    assert [r.revision for r in revisions] == ["0005", "0004", "0003", "0002", "0001"]
-    assert revisions[0].down_revision == "0004"
-    assert revisions[1].down_revision == "0003"
-    assert revisions[2].down_revision == "0002"
-    assert revisions[3].down_revision == "0001"
-    assert revisions[4].down_revision is None
+    assert [r.revision for r in revisions] == ["0006", "0005", "0004", "0003", "0002", "0001"]
+    assert revisions[0].down_revision == "0005"
+    assert revisions[1].down_revision == "0004"
+    assert revisions[2].down_revision == "0003"
+    assert revisions[3].down_revision == "0002"
+    assert revisions[4].down_revision == "0001"
+    assert revisions[5].down_revision is None
 
 
 def test_migration_files_follow_the_naming_scheme() -> None:
@@ -68,6 +70,7 @@ def test_migration_files_follow_the_naming_scheme() -> None:
         "2026_11_25_0003_create_rbac_tables.py",
         "2026_11_26_0004_create_schema_registry_tables.py",
         "2026_11_26_0005_create_external_api_connector_tables.py",
+        "2026_11_26_0006_create_ai_usage_records.py",
     ]
 
 
@@ -108,14 +111,24 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
 
         command.upgrade(config, "head")
         assert _tables(engine) == {
-            "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES, *CONNECTOR_TABLES
+            "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES,
+            *CONNECTOR_TABLES, *AI_TABLES,
         }
-        assert _current_revision(engine) == "0005"
+        assert _current_revision(engine) == "0006"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
         _assert_rbac_structure_and_seed(engine)
         _assert_schema_registry_structure(engine)
         _assert_connector_structure(engine)
+        _assert_ai_structure(engine)
+
+        command.downgrade(config, "0005")
+        assert _tables(engine) == {
+            "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES, *CONNECTOR_TABLES
+        }
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT count(*) FROM permissions WHERE key LIKE 'ai.%'")).scalar_one() == 0
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 5
 
         command.downgrade(config, "0004")
         assert _tables(engine) == {
@@ -123,7 +136,7 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         }
         with engine.connect() as connection:
             assert connection.execute(text("SELECT count(*) FROM permissions WHERE key LIKE 'connector.%'")).scalar_one() == 0
-            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 4
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 6
 
         command.downgrade(config, "0003")
         assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES}
@@ -141,12 +154,13 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         assert _current_revision(engine) is None
 
         command.upgrade(config, "head")
-        assert _current_revision(engine) == "0005"
+        assert _current_revision(engine) == "0006"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
         _assert_rbac_structure_and_seed(engine)
         _assert_schema_registry_structure(engine)
         _assert_connector_structure(engine)
+        _assert_ai_structure(engine)
     finally:
         engine.dispose()
 
@@ -246,8 +260,8 @@ def _assert_rbac_structure_and_seed(engine: Engine) -> None:
             )
         ).scalar_one()
         assert admin_permissions == len(SYSTEM_PERMISSIONS)
-        # 1 from 0003, incremented by 0004 (schema permissions) and 0005 (connector permissions).
-        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 3
+        # 1 from 0003, incremented by 0004 (schema), 0005 (connector) and 0006 (AI permissions).
+        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 4
         # Only built-in rows: no business roles or permissions are hard-coded.
         assert connection.execute(text("SELECT count(*) FROM roles WHERE NOT is_system")).scalar_one() == 0
         assert connection.execute(text("SELECT count(*) FROM permissions WHERE NOT is_system")).scalar_one() == 0
@@ -294,3 +308,20 @@ def _assert_connector_structure(engine: Engine) -> None:
         keys = set(connection.execute(text("SELECT key FROM permissions WHERE key LIKE 'connector.%'")).scalars())
         assert keys == {"connector.read", "connector.create", "connector.update", "connector.delete", "connector.test",
                         "connector.activate"}
+
+
+def _assert_ai_structure(engine: Engine) -> None:
+    inspector = inspect(engine)
+    columns = {c["name"]: c for c in inspector.get_columns("ai_usage_records")}
+    assert {"provider", "model", "status", "input_tokens", "output_tokens", "total_tokens", "latency_ms"} <= set(columns)
+    # Token counts are nullable: a provider that reports nothing leaves them NULL (never estimated).
+    assert all(columns[name]["nullable"] for name in ("input_tokens", "output_tokens", "total_tokens"))
+    # No prompt, answer, credential or price is stored.
+    assert not set(columns) & {"prompt", "messages", "content", "response", "api_key", "credential", "cost", "price"}
+    assert {fk["referred_table"]: fk["options"].get("ondelete") for fk in inspector.get_foreign_keys("ai_usage_records")} == {
+        "users": "SET NULL"
+    }
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM ai_usage_records")).scalar_one() == 0
+        keys = set(connection.execute(text("SELECT key FROM permissions WHERE key LIKE 'ai.%'")).scalars())
+        assert keys == {"ai.provider.read", "ai.provider.test", "ai.usage.read"}
