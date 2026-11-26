@@ -34,6 +34,7 @@ class AuthEventType:
     SESSIONS_REVOKED = "sessions_revoked"
     REFRESH_TOKEN_REUSE = "refresh_token_reuse"
     ADMIN_BOOTSTRAPPED = "admin_bootstrapped"
+    AI_PROVIDER_TESTED = "ai_provider_tested"
 
 
 class AuthEvent(UUIDPrimaryKeyMixin, Base):

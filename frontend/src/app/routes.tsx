@@ -1,6 +1,7 @@
 import type { RouteObject } from "react-router";
 
 import {
+  AIProviderPage,
   ConnectorDetailPage,
   ConnectorsPage,
   PermissionEditorPage,
@@ -14,7 +15,7 @@ import {
 } from "@/app/lazyPages";
 import type { RouteHandle } from "@/app/routeHandle";
 import { RouteErrorFallback } from "@/components/ErrorBoundary";
-import { RedirectIfAuthenticated, RequireAuth, RequirePermission } from "@/features/auth/guards";
+import { RedirectIfAuthenticated, RequireAnyPermission, RequireAuth, RequirePermission } from "@/features/auth/guards";
 import { AdminIndexRedirect, AdminLayout } from "@/layouts/AdminLayout";
 import { AppLayout } from "@/layouts/AppLayout";
 import { AuthLayout } from "@/layouts/AuthLayout";
@@ -121,6 +122,12 @@ export const routes: RouteObject[] = [
                       { index: true, element: <ConnectorsPage /> },
                       { path: ":connectorId", element: <ConnectorDetailPage />, handle: crumb("Connector details") },
                     ],
+                  },
+                  {
+                    path: "ai",
+                    element: <RequireAnyPermission permissions={["ai.provider.read", "ai.provider.test", "ai.usage.read"]} />,
+                    handle: crumb("AI provider"),
+                    children: [{ index: true, element: <AIProviderPage /> }],
                   },
                 ],
               },

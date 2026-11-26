@@ -32,6 +32,12 @@ export function RequirePermission({ permission }: { permission: Permission }) {
   return hasPermission(permission) ? <Outlet /> : <ForbiddenPage />;
 }
 
+/** Child routes for users who hold at least one of ``permissions`` (pages whose sections need different keys). */
+export function RequireAnyPermission({ permissions }: { permissions: Permission[] }) {
+  const { hasPermission } = usePermissions();
+  return permissions.some(hasPermission) ? <Outlet /> : <ForbiddenPage />;
+}
+
 /** Public pages (login, password reset) that a signed-in user does not need. */
 export function RedirectIfAuthenticated() {
   const { status } = useAuth();

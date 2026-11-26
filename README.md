@@ -8,17 +8,17 @@ language based on the real results.
 Each company installs and runs its **own independent copy** of OpsPilot AI. It is not a multi-tenant SaaS
 product, and it never connects directly to the company's business database.
 
-> **Status:** Module 01 (project foundation), Module 02 (application database layer), Module 03
-> (authentication and user management) and Module 04 (roles and permissions) are implemented. Schema registration,
-> the external API integration, the LLM, SQL generation, the SQL security guard and the chat interface arrive in
-> later modules. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+> **Status:** Modules 01 to 08 are implemented: foundation, application database, authentication, roles and
+> permissions, the frontend design system, the schema registry, the company GET API connector, and the AI provider
+> layer. SQL generation, the SQL security guard and the chat interface arrive in later modules. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Architecture overview
 
 ```
 Browser ──> frontend (React SPA) ──HTTP/JSON──> backend (FastAPI) ──> application database (PostgreSQL)
                                                      │
-                                                     └──(later modules)──> company GET SQL API, LLM provider
+                                                     ├──> company GET SQL API (connector)
+                                                     └──> LLM provider (NVIDIA or OpenAI-compatible)
 ```
 
 - **frontend/**: React + TypeScript single-page app. Talks to the backend only through one API client.
@@ -61,7 +61,8 @@ Then edit `.env`:
 - `SECRET_KEY`: signs access tokens. Required (32+ characters) when `APP_ENV=production`, recommended everywhere.
 - `CONNECTOR_ENCRYPTION_KEY` and `CONNECTOR_ALLOWED_HOSTS`: needed before you can create a company API connector
   (see [Company API connector](#company-api-connector)).
-- `NVIDIA_*`: optional until the LLM module.
+- `NVIDIA_API_KEY` and `NVIDIA_MODEL`: needed for AI features (see [AI provider](#ai-provider)). Optional: without
+  them the application runs and the AI provider shows as not configured.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -92,8 +93,13 @@ Then edit `.env`:
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `300` | Window for the limits below |
 | `AUTH_RATE_LIMIT_PER_IP` / `AUTH_RATE_LIMIT_PER_ACCOUNT` | `30` / `10` | Login, forgot-password and reset attempts per window, per client IP and per email |
 | `AUTH_REFRESH_RATE_LIMIT_PER_IP` | `300` | Token refreshes per window per client IP |
-| `NVIDIA_API_KEY` / `NVIDIA_MODEL` | empty | LLM provider credentials (optional for now) |
-| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | LLM provider endpoint (must be https) |
+| `AI_PROVIDER` | `nvidia` | Active LLM provider: `nvidia` or `openai_compatible` |
+| `NVIDIA_API_KEY` / `NVIDIA_MODEL` | empty | NVIDIA key and model id (optional; AI features need them) |
+| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | NVIDIA endpoint (must be https) |
+| `OPENAI_COMPATIBLE_API_KEY` / `_BASE_URL` / `_MODEL` | empty | Another OpenAI-compatible endpoint |
+| `AI_TEMPERATURE` / `AI_MAX_OUTPUT_TOKENS` | `0.2` / `1024` | Generation defaults; requests may lower max tokens, never raise it |
+| `AI_REQUEST_TIMEOUT_SECONDS` / `AI_MAX_RETRIES` / `AI_RETRY_MAX_WAIT_SECONDS` | `60` / `2` / `20` | Per-attempt timeout and bounded retries for transient failures |
+| `AI_TEST_RATE_LIMIT_PER_USER` | `10` | Provider test runs per user per 5 minutes |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `opspilot` / — / `opspilot` | Docker Compose database credentials |
 | `VITE_API_BASE_URL` | `http://localhost:8000` | Backend URL as seen from the browser (built into the frontend) |
 | `VITE_API_TIMEOUT_MS` | `10000` | Frontend request timeout |
@@ -357,6 +363,30 @@ There is deliberately no endpoint that accepts SQL. Errors specific to connector
 `503 CONNECTOR_CREDENTIALS_UNAVAILABLE` and `409 CONFLICT` (duplicate name or endpoint, or another active connector
 for the schema).
 
+## AI provider
+
+OpsPilot reaches its language model through one backend service (`LLMService`). NVIDIA's API is used by default;
+any OpenAI-compatible endpoint can be selected instead with `AI_PROVIDER=openai_compatible`.
+
+1. In `.env`, set `NVIDIA_API_KEY` (from <https://build.nvidia.com>, starts with `nvapi-`) and `NVIDIA_MODEL` (for
+   example `meta/llama-3.1-70b-instruct`), then restart the backend with `docker compose up -d backend`.
+2. Under **Administration → AI provider**, check the health and press **Run test**. The test sends a fixed prompt
+   chosen by the server; there is no way to send your own text from this page.
+
+The key stays in the server environment: it is never stored in the database, returned by the API, shown in the
+browser or logged. Every AI request is recorded with the token counts the provider reported (never estimated, no
+costs).
+
+| Endpoint (under `/api/v1`) | Permission | Purpose |
+| --- | --- | --- |
+| `GET /ai/providers`, `GET /ai/providers/active` | `ai.provider.read` | Provider, model, endpoint, whether a key is set |
+| `GET /ai/providers/health` | `ai.provider.read` | Reachability and whether the model is listed (no tokens used) |
+| `POST /ai/providers/test` | `ai.provider.test` | Fixed test prompt; latency and reported usage |
+| `GET /ai/usage` | `ai.usage.read` | Usage records and totals |
+
+Architecture, NVIDIA setup, every variable, error and retry rules, how to add a provider and how to test:
+[docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md).
+
 ## Application database
 
 OpsPilot's own PostgreSQL 16 database (never the company's business database). The backend uses async SQLAlchemy 2.x
@@ -499,6 +529,9 @@ pytest                          # everything
 pytest tests/database           # database layer only
 pytest -m postgres              # only the tests that use PostgreSQL
 ```
+
+AI provider tests mock the provider and never need a key. An optional live test against the real provider is
+skipped unless you opt in: `OPSPILOT_LIVE_AI_TESTS=1 pytest -m live_ai` (see [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md#6-testing)).
 
 Safety: pytest stops if the test database's name does not contain `test`, or if it is the same database as
 `DATABASE_URL`. Each run rebuilds the test schema with the migrations; the migration test creates and drops its own

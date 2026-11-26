@@ -32,6 +32,7 @@ def test_all_application_models_share_one_metadata() -> None:
         "schema_change_events",
         "external_api_connectors",
         "connector_audit_events",
+        "ai_usage_records",
     }
 
 

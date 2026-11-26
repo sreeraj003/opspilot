@@ -1,4 +1,4 @@
-import { Cable, Database, Home, KeyRound, ShieldCheck, Users, type LucideIcon } from "lucide-react";
+import { BrainCircuit, Cable, Database, Home, KeyRound, ShieldCheck, Users, type LucideIcon } from "lucide-react";
 
 /**
  * The application's navigation registry. The sidebar, the mobile drawer and the
@@ -43,6 +43,13 @@ export const navigation: NavSection[] = [
       { id: "permissions", label: "Permissions", to: "/admin/permissions", icon: KeyRound, permission: "permissions:read" },
       { id: "schemas", label: "Schemas", to: "/admin/schemas", icon: Database, permission: "schema.read" },
       { id: "connectors", label: "Connectors", to: "/admin/connectors", icon: Cable, permission: "connector.read" },
+      {
+        id: "ai",
+        label: "AI provider",
+        to: "/admin/ai",
+        icon: BrainCircuit,
+        anyPermission: ["ai.provider.read", "ai.provider.test", "ai.usage.read"],
+      },
     ],
   },
 ];

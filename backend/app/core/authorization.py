@@ -60,6 +60,10 @@ class Permission(StrEnum):
     CONNECTOR_DELETE = "connector.delete"
     CONNECTOR_TEST = "connector.test"
     CONNECTOR_ACTIVATE = "connector.activate"
+    # Module 08: AI provider administration.
+    AI_PROVIDER_READ = "ai.provider.read"
+    AI_PROVIDER_TEST = "ai.provider.test"
+    AI_USAGE_READ = "ai.usage.read"
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +157,26 @@ SYSTEM_PERMISSIONS: tuple[SystemPermissionDefinition, ...] = (
     ),
     SystemPermissionDefinition(
         Permission.CONNECTOR_ACTIVATE, "Activate connectors", "Activate and deactivate external API connectors.", True
+    ),
+    # AI provider permissions are delegable. None of them reveals the provider's API key, and
+    # none lets a user send their own text to the provider: the test prompt is fixed.
+    SystemPermissionDefinition(
+        Permission.AI_PROVIDER_READ,
+        "View AI provider",
+        "View the configured AI provider and model (never the API key) and check provider health.",
+        True,
+    ),
+    SystemPermissionDefinition(
+        Permission.AI_PROVIDER_TEST,
+        "Test AI provider",
+        "Run the fixed, system-generated test prompt against the AI provider (uses provider tokens).",
+        True,
+    ),
+    SystemPermissionDefinition(
+        Permission.AI_USAGE_READ,
+        "View AI usage",
+        "View AI request usage records: provider, model, status, latency and reported token counts.",
+        True,
     ),
 )
 

@@ -2,11 +2,104 @@
 
 ## Current module
 
-**Module 07: External GET API connector and execution adapter.** Implemented and verified on 2026-11-26. Awaiting
-the project owner's review. Module 08 has not been started.
+**Module 08: AI provider integration and LLM service layer.** Implemented and verified on 2026-11-26. Awaiting the
+project owner's review. Module 09 has not been started.
 
-Built on `main` with Modules 01 to 06 merged. Single installation, single organisation. Modules 01 to 06 keep their
-behaviour. Earlier records are kept below.
+Built on `main` with Modules 01 to 07 merged. Modules 01 to 07 keep their behaviour. Earlier records are kept below.
+
+## Module 08: what was implemented
+
+References: [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md), ARCHITECTURE.md section 9, README "AI provider".
+
+- **AI module** (`backend/app/ai/`): `config/`, `exceptions/`, `schemas/`, `providers/`, `services/`,
+  `dependencies/`. Tests in `backend/tests/ai/`.
+- **Provider interface.** `LLMProvider` with `generate()` and `health_check()`. Implementations:
+  `OpenAICompatibleProvider` (HTTPX, `POST /chat/completions`, `GET /models`, no SDK) and `NvidiaProvider` (the same
+  adapter with NVIDIA's name). A registry maps names to classes. One pooled `httpx.AsyncClient` per process, created
+  in the lifespan, shared by all providers (no redirects, TLS verified).
+- **Configuration.** The existing `Settings` gained `AI_PROVIDER`, `OPENAI_COMPATIBLE_*` and `AI_*` generation and
+  retry settings next to the existing `NVIDIA_*` ones (validated: https URLs, model-name format, single-line keys,
+  production refuses http). `ProviderConfigService` builds one `ProviderConfig` per provider (name, model, base URL,
+  credential reference, temperature, max output tokens, timeout, active flag, missing settings). Keys stay in the
+  environment as `SecretStr`: never in the database, responses, reprs or logs. Without a key the app starts and the
+  provider reports "not configured".
+- **Typed models.** `LLMMessage`, `LLMGenerationRequest` (role, count, length, total size, temperature, max tokens,
+  model override and metadata validation), `LLMGenerationResponse` (content, provider, model, finish reason, input,
+  output and total tokens when reported, latency, request id, attempts).
+- **`LLMService`.** Selects the active provider, validates, applies defaults and the max-token ceiling, releases the
+  request's database read transaction before the network call, retries only transient failures (connection never
+  established, 429, 502, 503) with bounded exponential backoff and `Retry-After` support, normalises responses,
+  records latency and usage, and supports health checks.
+- **Errors.** `ProviderConfigurationError`, `ProviderAuthenticationError`, `ProviderRateLimitError`,
+  `ProviderTimeoutError`, `ProviderConnectionError`, `ProviderResponseError`, `ProviderUnavailableError`, all
+  `AppError`s with fixed messages. Provider bodies are never returned or logged.
+- **Usage tracking.** `UsageService` writes `ai_usage_records` (reported tokens only, never estimated, no costs).
+  Provider tests are also audited as `ai_provider_tested` in the existing audit trail.
+- **Observability.** `app.ai` structured events (`ai.request.started/retry/completed/failed/rate_limited`,
+  `ai.provider.http_error`, `ai.provider.health`, ...) with HTTP and LLM request ids; no prompts, answers or keys.
+- **Administration API** with three new delegable system permissions (`ai.provider.read`, `ai.provider.test`,
+  `ai.usage.read`). The provider test sends a fixed prompt, reads no body and is rate-limited per user.
+- **Frontend.** **Administration → AI provider** (`/admin/ai`): configuration (key shown only as "Set on server,
+  hidden"), health with "Check health", connection test with result, latency and reported usage, and a usage table
+  with totals. Each part is shown only with its permission.
+
+### Tables
+
+`ai_usage_records`.
+
+### Migrations
+
+`0006_create_ai_usage_records` (`2026_11_26_0006_create_ai_usage_records.py`): creates the table, its checks and two
+indexes; inserts the three `ai.*` permissions and grants them to Administrator; bumps the authorization revision.
+`downgrade()` removes all of this.
+
+### API endpoints (under `/api/v1`)
+
+`GET /ai/providers`, `GET /ai/providers/active`, `GET /ai/providers/health` (`ai.provider.read`);
+`POST /ai/providers/test` (`ai.provider.test`); `GET /ai/usage` (`ai.usage.read`).
+
+### New configuration and dependencies
+
+New settings, in `.env.example` (with notes) and `docker-compose.yml`: `AI_PROVIDER`,
+`OPENAI_COMPATIBLE_API_KEY`, `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_MODEL`, `AI_TEMPERATURE`,
+`AI_MAX_OUTPUT_TOKENS`, `AI_REQUEST_TIMEOUT_SECONDS`, `AI_MAX_RETRIES`, `AI_RETRY_MAX_WAIT_SECONDS`,
+`AI_TEST_RATE_LIMIT_PER_USER`. Existing: `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `NVIDIA_MODEL`. No new dependencies
+(HTTPX was already a runtime dependency).
+
+### Commands executed and results (Module 08)
+
+| Command | Result |
+| --- | --- |
+| `pytest -q` with `TEST_DATABASE_URL` (PostgreSQL 16) | **677 passed, 1 skipped** (576 before; 101 added, 3 updated for the new table, permissions and migration head; the skip is the opt-in live test) |
+| `pytest -q` without a test database | 348 passed, 330 skipped (database tests and the live test) |
+| `alembic upgrade head`, `alembic check`, `alembic downgrade -1`, `alembic upgrade head` | OK (`0005 → 0006`, no drift, back to `0005`, up again; also covered by `tests/database/test_migrations.py`) |
+| `uvicorn app.main:app` with no NVIDIA settings | Starts; `/health` ok; log warns "AI provider is not configured" |
+| `npx vitest run` | **209 passed** in 31 files (196 before; 13 added) |
+| `npx tsc -b` | OK, no errors |
+| `npm run lint` | OK, 0 errors, 0 warnings |
+| `npm run build` | OK, `AIProviderPage` lazy-loaded (11 kB) |
+| Headless Chromium on the built app (API mocked) at 1280 px and 390 px | Page renders, test runs, no horizontal page overflow |
+
+**Backend tests added:** provider interface and registry, NVIDIA and OpenAI-compatible adapters (request format,
+roles, temperature, max tokens, model override), provider selection, missing key, invalid configuration, successful
+generation, response normalisation, usage never invented, every HTTP error mapping, malformed and oversized
+responses, timeouts, retry behaviour (bounded, backoff cap, `Retry-After`, no retry for authentication or ambiguous
+timeouts), logs without keys or prompts, health checks, credential masking in every response, usage records and
+totals, audit events, rate limiting, authentication and per-permission authorization. All provider HTTP is mocked;
+no key is needed. `tests/ai/test_live_provider.py` is an opt-in live test (`OPSPILOT_LIVE_AI_TESTS=1 pytest -m live_ai`).
+
+**Frontend tests added:** configuration display (and no key), not-configured guidance, health status and re-check,
+unhealthy state, test interaction (no body sent), usage display only when reported, loading and failure states,
+request refused, usage table and summary, empty usage, permission-based sections, route and navigation visibility.
+
+### Known limitations (Module 08)
+
+- Provider configuration is environment-only; changes need a backend restart. No database-stored provider configs.
+- No streaming, tool calls or JSON mode; only the first choice is used.
+- Reasoning models that return `content: null` are reported as malformed responses.
+- The health check proves reachability and lists models; only the test prompt proves the key.
+- The test-run rate limit is per backend process.
+- No live call to NVIDIA was made in this environment (no key here); the live test is provided for the owner to run.
 
 ## Module 07: what was implemented
 
@@ -859,4 +952,4 @@ Documentation
 
 ## Next module
 
-Module 08, as defined by the project owner. Not started: waiting for review and approval of Module 07.
+Module 09, as defined by the project owner. Not started: waiting for review and approval of Module 08.

@@ -5,6 +5,7 @@ Settings are read from the process environment first, then from ``.env`` files
 held in ``SecretStr`` so they never appear in logs, reprs or error messages.
 """
 
+import re
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -22,6 +23,7 @@ _ENV_FILES = (_BACKEND_DIR.parent / ".env", _BACKEND_DIR / ".env")
 
 _MIN_SECRET_KEY_LENGTH = 32
 _POSTGRES_SCHEMES = ("postgresql", "postgres")
+_AI_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 
 
 class Environment(StrEnum):
@@ -155,16 +157,39 @@ class Settings(BaseSettings):
     connector_pool_max_connections: int = Field(default=20, ge=1, le=1000)
     connector_pool_max_keepalive: int = Field(default=10, ge=0, le=1000)
 
-    # AI provider settings. Optional until the LLM module is implemented.
+    # --- AI provider (Module 08). See docs/AI_PROVIDERS.md. ---------------------------------
+    # Every AI setting is optional: without an API key and model the application still
+    # starts and the provider simply reports itself as not configured.
+    # Which provider LLMService uses: "nvidia" or "openai_compatible".
+    ai_provider: Literal["nvidia", "openai_compatible"] = "nvidia"
+    # NVIDIA API (OpenAI-compatible chat completions at NVIDIA_BASE_URL).
     nvidia_api_key: SecretStr | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_model: str | None = None
+    # Any other OpenAI-compatible endpoint (OpenAI, Azure OpenAI proxy, vLLM, a gateway, ...).
+    openai_compatible_api_key: SecretStr | None = None
+    openai_compatible_base_url: str | None = None
+    openai_compatible_model: str | None = None
+    # Generation defaults applied to every request; a request may lower max tokens, never raise it.
+    ai_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    ai_max_output_tokens: int = Field(default=1024, ge=1, le=32768)
+    # Seconds one provider request may take (connect + response), per attempt.
+    ai_request_timeout_seconds: float = Field(default=60.0, ge=1.0, le=600.0)
+    # Extra attempts for transient failures only (connection refused, 429, 502, 503). 0 disables retries.
+    ai_max_retries: int = Field(default=2, ge=0, le=5)
+    # Longest wait between attempts, including a provider's Retry-After. Longer waits fail instead.
+    ai_retry_max_wait_seconds: float = Field(default=20.0, ge=0.0, le=120.0)
+    # Administrator "test provider" runs allowed per user per 5 minutes (each run spends tokens).
+    ai_test_rate_limit_per_user: int = Field(default=10, ge=1, le=1000)
 
     @field_validator(
         "database_url",
         "secret_key",
         "nvidia_api_key",
         "nvidia_model",
+        "openai_compatible_api_key",
+        "openai_compatible_base_url",
+        "openai_compatible_model",
         "frontend_base_url",
         "auth_cookie_domain",
         "auth_cookie_secure",
@@ -283,6 +308,42 @@ class Settings(BaseSettings):
             raise ValueError("NVIDIA_BASE_URL must be an https:// URL")
         return value
 
+    @field_validator("openai_compatible_base_url")
+    @classmethod
+    def _validate_openai_compatible_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().rstrip("/")
+        # http:// is accepted here for a local model server during development; the
+        # production check below refuses it.
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(value)
+        if parts.scheme not in ("https", "http") or not parts.hostname or "@" in parts.netloc or parts.query:
+            raise ValueError("OPENAI_COMPATIBLE_BASE_URL must be an https:// URL without credentials or query string")
+        return value
+
+    @field_validator("nvidia_api_key", "openai_compatible_api_key")
+    @classmethod
+    def _validate_ai_api_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        key = value.get_secret_value().strip()
+        if any(ch.isspace() for ch in key) or not key.isprintable():
+            # The message never includes the value.
+            raise ValueError("AI provider API keys must be a single line without spaces")
+        return SecretStr(key)
+
+    @field_validator("nvidia_model", "openai_compatible_model")
+    @classmethod
+    def _validate_ai_model(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if len(value) > 200 or not _AI_MODEL_RE.fullmatch(value):
+            raise ValueError("AI model names may contain letters, digits and . _ : / - only (at most 200 characters)")
+        return value
+
     @model_validator(mode="after")
     def _validate_connector_key_is_dedicated(self) -> Self:
         key = self.connector_encryption_key
@@ -308,6 +369,8 @@ class Settings(BaseSettings):
             problems.append("CONNECTOR_ALLOWED_PRIVATE_NETWORKS must not include loopback networks")
         if self.auth_cookie_secure is False:
             problems.append("AUTH_COOKIE_SECURE must not be false (production requires HTTPS)")
+        if self.openai_compatible_base_url and not self.openai_compatible_base_url.startswith("https://"):
+            problems.append("OPENAI_COMPATIBLE_BASE_URL must be an https:// URL")
         if problems:
             raise ValueError("Invalid production configuration: " + "; ".join(problems))
         return self
@@ -347,6 +410,13 @@ class Settings(BaseSettings):
 
     @property
     def ai_configured(self) -> bool:
+        """True when the active AI provider has a key, a model and a base URL."""
+        if self.ai_provider == "openai_compatible":
+            return (
+                self.openai_compatible_api_key is not None
+                and self.openai_compatible_model is not None
+                and self.openai_compatible_base_url is not None
+            )
         return self.nvidia_api_key is not None and self.nvidia_model is not None
 
 

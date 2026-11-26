@@ -39,7 +39,10 @@ export type SystemPermission =
   | "connector.update"
   | "connector.delete"
   | "connector.test"
-  | "connector.activate";
+  | "connector.activate"
+  | "ai.provider.read"
+  | "ai.provider.test"
+  | "ai.usage.read";
 
 export type Permission = SystemPermission | (string & {});
 
