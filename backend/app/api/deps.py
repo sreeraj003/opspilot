@@ -20,7 +20,10 @@ from app.core.exceptions import AuthenticationError, PermissionDeniedError, Serv
 from app.core.rate_limit import RateLimiter
 from app.core.security import AccessTokenService
 from app.database.session import Database
+from app.connectors.adapters.execution import ConnectorExecutionAdapter
+from app.connectors.adapters.http_client import ConnectorHttpClient
 from app.services.application_settings_service import ApplicationSettingsService
+from app.services.connector_service import ConnectorService
 from app.services.auth_service import AuthService, ClientInfo, PasswordResetNotifier, Principal
 from app.services.health_service import HealthService
 from app.services.password_service import PasswordService
@@ -226,3 +229,24 @@ def get_schema_registry_service(session: DbSessionDep, settings: SettingsDep) ->
 
 
 SchemaRegistryServiceDep = Annotated[SchemaRegistryService, Depends(get_schema_registry_service)]
+
+
+# --- external API connectors (Module 07) --------------------------------------------------------------
+
+
+def get_connector_service(request: Request, session: DbSessionDep, settings: SettingsDep) -> ConnectorService:
+    state = request.app.state
+    http: ConnectorHttpClient | None = getattr(state, "connector_http", None)
+    authority = state.execution_authority
+    adapter = ConnectorExecutionAdapter(http, authority) if http is not None and not http.is_closed else None
+    return ConnectorService(
+        session,
+        settings=settings,
+        cipher=state.connector_cipher,
+        policy=state.connector_policy,
+        adapter=adapter,
+        authority=authority,
+    )
+
+
+ConnectorServiceDep = Annotated[ConnectorService, Depends(get_connector_service)]

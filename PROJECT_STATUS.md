@@ -2,13 +2,171 @@
 
 ## Current module
 
-**Module 06: External schema registry and metadata management.** Implemented and verified on 2026-11-26. Awaiting
-the project owner's review. Module 07 has not been started.
+**Module 07: External GET API connector and execution adapter.** Implemented and verified on 2026-11-26. Awaiting
+the project owner's review. Module 08 has not been started.
 
-Built on top of the Module 05 branch (not yet merged into `main` when this module started). Single installation,
-single organisation: no tenant model. Modules 01 to 05 keep their behaviour. Earlier records are kept below.
+Built on `main` with Modules 01 to 06 merged. Single installation, single organisation. Modules 01 to 06 keep their
+behaviour. Earlier records are kept below.
 
-## Module 06: what was implemented
+## Module 07: what was implemented
+
+References: [docs/CONNECTORS.md](docs/CONNECTORS.md), ARCHITECTURE.md section 8, README "Company API connector".
+
+- **Model and storage.**
+  - `ExternalAPIConnector` (soft-deleted, in `app/models/connector.py`) stores everything needed to call the
+    company's GET SQL endpoint, and is associated with one Module 06 schema source.
+  - Database constraints enforce:
+    - GET only;
+    - encrypted credentials only (the `v1:` prefix), present exactly when the auth type needs them;
+    - timeout ranges;
+    - unique live names and endpoints;
+    - at most one active connector per schema.
+  - `ConnectorAuditEvent` is an append-only audit log.
+- **Credential encryption.**
+  - AES-256-GCM (`app/connectors/security/credentials.py`), with a random nonce per value and the connector id and
+    purpose bound as associated data.
+  - The key is the dedicated `CONNECTOR_ENCRYPTION_KEY`; startup refuses it if it equals `SECRET_KEY`.
+  - Rotation uses `CONNECTOR_ENCRYPTION_PREVIOUS_KEYS` and `python -m app.cli rotate-connector-keys`.
+  - A missing key gives a secure 503. There is no plaintext fallback.
+  - Credentials are never returned, logged or prefilled; an omitted credential on update keeps the stored one.
+- **HTTP client.**
+  - One shared HTTPX `AsyncClient` per process, created and closed in the lifespan.
+  - Pooled; connect, read and overall timeouts; streamed size limit.
+  - Validates content type, status and JSON. Never follows redirects, ignores proxy environment variables and
+    stores no cookies. TLS is always verified.
+- **Request construction.**
+  - Parameters are percent-encoded. The SQL is never truncated, and the method never switches to POST.
+  - SQL over the length limit, or a URL over `CONNECTOR_MAX_URL_LENGTH`, is refused before anything is sent.
+- **SSRF protection** (`app/connectors/security/destinations.py`), applied on every request:
+  - HTTPS only in production, and a host allowlist that denies everything when empty;
+  - DNS resolution in which every address must pass;
+  - private networks only when approved, loopback only in development or test, and link-local, metadata and
+    multicast addresses never;
+  - IP pinning against DNS rebinding.
+- **Response adapter.**
+  - A configurable contract: an envelope with renamable fields, or a raw array. Field names are never guessed.
+  - A strict shape: an empty result differs from every error, and `success:false` is always an error.
+  - No values are fabricated. Only a sanitised error code is kept from the API's error.
+- **Connection test.**
+  - Uses the health endpoint if one is configured, otherwise the fixed `SELECT 1 AS opspilot_connection_test`.
+  - The endpoint takes no body. Each step is reported, and the outcome is stored and audited.
+- **Trusted execution boundary.**
+  - `ValidatedQueryRequest` is sealed with HMAC by `ExecutionApprovalAuthority`, under a key that exists only in the
+    running process.
+  - Issuers are restricted, with fixed SQL per issuer, a 120 s expiry, and connector, schema and version matching.
+  - `ConnectorService.execute()` is internal only and audits every attempt with an SQL fingerprint. No public
+    endpoint accepts SQL.
+- **Error categories.** 16 categories: configuration, encryption, destination, DNS, connection, TLS, timeout,
+  authentication, redirect, HTTP status, response size, content type, malformed response, API-reported failure,
+  request too large, and validation rejected.
+- **Permissions.** `connector.read`, `create`, `update`, `delete`, `test` and `activate`. They are Module 04 system
+  permissions (delegable), granted to Administrator by the migration. No role names in code.
+- **Frontend.**
+  - A Connectors list with search, status, authentication and last-test filters, and pagination.
+  - A create and edit dialog:
+    - masked secrets, never prefilled, with "empty keeps the stored value";
+    - authentication-type fields and custom headers with a secret flag;
+    - the server's approved hosts and encryption status;
+    - a warning that SQL travels in the URL.
+  - A Connector page with the masked configuration, connection status, the last error, a step-by-step test result,
+    Activate/Deactivate, Edit, Delete with confirmation, and paginated activity.
+  - Navigation item "Connectors" under Administration. Every action is shown only with its permission.
+
+### Tables
+
+`external_api_connectors`, `connector_audit_events`.
+
+### Migrations
+
+`0005_create_external_api_connector_tables` (`2026_11_26_0005_create_external_api_connector_tables.py`):
+
+- creates both tables with their constraints and indexes;
+- inserts the six `connector.*` permissions and grants them to the Administrator role;
+- bumps the authorization revision.
+
+`downgrade()` removes all of this again.
+
+### API endpoints (under `/api/v1`)
+
+`POST/GET /connectors`; `GET /connectors/environment`; `GET/PATCH/DELETE /connectors/{id}`;
+`PATCH /connectors/{id}/status`; `POST /connectors/{id}/test`; `GET /connectors/{id}/health`;
+`GET /connectors/{id}/audit`. Permissions per endpoint are listed in the README.
+
+### New configuration and dependencies
+
+New settings, all in `.env.example` (with key-generation instructions for Windows) and `docker-compose.yml`:
+
+- `CONNECTOR_ENCRYPTION_KEY` (required to use connectors) and `CONNECTOR_ENCRYPTION_PREVIOUS_KEYS`;
+- `CONNECTOR_ALLOWED_HOSTS` and `CONNECTOR_ALLOWED_PRIVATE_NETWORKS`;
+- `CONNECTOR_ALLOW_HTTP` and `CONNECTOR_CA_BUNDLE`;
+- `CONNECTOR_MAX_URL_LENGTH`, `CONNECTOR_MAX_RESPONSE_BYTES_LIMIT` and `CONNECTOR_MAX_TIMEOUT_SECONDS`;
+- `CONNECTOR_POOL_MAX_CONNECTIONS` and `CONNECTOR_POOL_MAX_KEEPALIVE`.
+
+New runtime dependencies:
+
+- `httpx==0.28.1`, previously a dev dependency only;
+- `cryptography==50.0.2`.
+
+### Commands executed and results (Module 07)
+
+| Command | Result |
+| --- | --- |
+| `pytest -q` with `TEST_DATABASE_URL` (PostgreSQL 16) | **576 passed** (454 before; 122 added, 2 updated for the new tables and migration head) |
+| `pytest -q` without a test database | 266 passed, 310 skipped (database tests) |
+| `alembic upgrade head`, `alembic check`, `alembic downgrade -1`, `alembic upgrade head` | OK (`0004 → 0005`, no drift, back to `0004`, and up again; also covered by `tests/database/test_migrations.py`) |
+| `npx vitest run` | **196 passed** in 30 files (178 before; 18 added in 2 new files) |
+| `npx tsc -b` | OK, no errors |
+| `npm run lint` | OK, 0 errors, 0 warnings |
+| `npm run build` | OK, connector pages lazy-loaded, no chunk-size warning |
+
+**Backend tests added** (all HTTP mocked with `httpx.MockTransport` and a fake DNS resolver; no real network):
+
+- **CRUD and storage:** create, read, list, filter, update and delete; masked responses; ciphertext at rest;
+  credential retention on update; credential replacement; secret headers; reset of the test status when connection
+  fields change.
+- **Validation:** invalid configuration, duplicates, a missing encryption key, and wrong-key decryption.
+- **Activation:** activation rules.
+- **Connection test:**
+  - the encoded request (`sql=SELECT%201%20AS%20opspilot_connection_test`), the pinned IP, the Host header and SNI;
+  - the health endpoint;
+  - every failure category: timeout, connection, TLS, 401/403, 5xx, redirect, content type, malformed JSON,
+    `success:false`, too large, DNS, and SSRF rejections.
+- **Records and access:** audit records without secrets or SQL; logs without secrets; every permission, including
+  403s.
+- **Execution boundary:** no endpoint accepts SQL; `execute()` rejects forged, tampered, expired, mismatched,
+  oversize and inactive requests.
+- **Key rotation:** the rotation CLI path.
+- **52 unit tests** of the cipher, settings validation, the destination policy, query encoding, the client and the
+  response adapter.
+
+**Frontend tests added:**
+
+- **List:** contents with no secret values; search, filters and pagination through the API; permission-based
+  actions; loading, empty, error and 403 states.
+- **Create form:** a masked key; validation before sending; bearer and custom-header fields; secret headers; server
+  errors.
+- **Detail page:** masked configuration; test success and failure with steps; the stored last error; server errors.
+- **Editing:** no prefilled secrets; empty keeps the stored value; replacing a credential.
+- **Actions:** activate, and delete with confirmation; permission-based actions; a missing connector.
+
+Not run in Module 07: a native Windows run, Docker Compose (see Known issues), a call to a real company API, and a
+browser walkthrough of the new pages.
+
+### Known limitations
+
+- **No query execution from the product yet.** `ConnectorService.execute()` exists and is tested, but the only
+  permitted issuer is the connection test. The SQL generation and security guard modules will add theirs.
+- **SQL in the URL** can be logged by the company's web servers and proxies, which OpsPilot cannot control. See
+  docs/CONNECTORS.md section 7.
+- **Network egress.** Application-level SSRF checks are not a substitute for an egress firewall in production.
+- **One shared HTTP pool per process.** Pool limits are global, not per connector. The execution seal key is
+  per process, so trusted requests cannot cross processes, by design.
+- **Health** (`GET /connectors/{id}/health`) reports configuration checks and the last test. It does not call the
+  company API; use **Test connection** for a live check.
+- **Rotation** re-encrypts in one transaction. On a very large number of connectors, run it in a quiet period.
+- **Lost key.** If the encryption key is lost, the stored credentials cannot be recovered and must be re-entered.
+
+## Module 06 record
 
 References: [docs/SCHEMA_IMPORT_FORMAT.md](docs/SCHEMA_IMPORT_FORMAT.md), ARCHITECTURE.md section 7, README
 "Schema registry".
@@ -701,4 +859,4 @@ Documentation
 
 ## Next module
 
-Module 07, as defined by the project owner. Not started: waiting for review and approval of Module 06.
+Module 08, as defined by the project owner. Not started: waiting for review and approval of Module 07.

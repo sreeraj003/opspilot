@@ -127,6 +127,34 @@ class Settings(BaseSettings):
     # Most relationships one schema source may hold.
     schema_max_relationships: int = Field(default=5000, ge=1, le=50000)
 
+    # External GET API connectors (Module 07). See docs/CONNECTORS.md.
+    # AES-256-GCM key that encrypts connector credentials at rest: 32 random bytes,
+    # base64-encoded. Must differ from SECRET_KEY. Without it, connector credentials
+    # can be neither stored nor used (the rest of the application still works).
+    connector_encryption_key: SecretStr | None = None
+    # Retired keys, comma-separated, still accepted for decryption during a key rotation.
+    connector_encryption_previous_keys: SecretStr | None = None
+    # Administrator-approved destination hosts, comma-separated: exact names
+    # ("api.company.com") or one leading wildcard label ("*.company.com"). Empty
+    # means no connector destination is allowed (fail closed).
+    connector_allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Private, loopback or other non-public networks (CIDR) that connectors may reach.
+    # Public addresses are always allowed for approved hosts; nothing else is, unless listed here.
+    connector_allowed_private_networks: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Plain http:// destinations. Only honoured with APP_ENV=development or test.
+    connector_allow_http: bool = False
+    # Extra CA bundle (PEM file) for company backends signed by a private CA. TLS
+    # verification itself can never be disabled.
+    connector_ca_bundle: str | None = None
+    # Longest request URL (scheme, host, path and encoded query) a connector may send.
+    connector_max_url_length: int = Field(default=8192, ge=512, le=65536)
+    # Ceilings for the per-connector limits administrators configure.
+    connector_max_response_bytes_limit: int = Field(default=50 * 1024 * 1024, ge=1024, le=512 * 1024 * 1024)
+    connector_max_timeout_seconds: int = Field(default=120, ge=1, le=600)
+    # Pooled outbound connections shared by every connector (one client per process).
+    connector_pool_max_connections: int = Field(default=20, ge=1, le=1000)
+    connector_pool_max_keepalive: int = Field(default=10, ge=0, le=1000)
+
     # AI provider settings. Optional until the LLM module is implemented.
     nvidia_api_key: SecretStr | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
@@ -140,6 +168,9 @@ class Settings(BaseSettings):
         "frontend_base_url",
         "auth_cookie_domain",
         "auth_cookie_secure",
+        "connector_encryption_key",
+        "connector_encryption_previous_keys",
+        "connector_ca_bundle",
         mode="before",
     )
     @classmethod
@@ -180,6 +211,45 @@ class Settings(BaseSettings):
                 raise ValueError(f"CORS origin must start with http:// or https://: {origin}")
         return value
 
+    @field_validator("connector_allowed_hosts", "connector_allowed_private_networks", mode="before")
+    @classmethod
+    def _parse_comma_list(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("connector_allowed_hosts")
+    @classmethod
+    def _validate_connector_hosts(cls, value: list[str]) -> list[str]:
+        from app.connectors.security.destinations import normalize_host_pattern
+
+        return [normalize_host_pattern(item) for item in value]
+
+    @field_validator("connector_allowed_private_networks")
+    @classmethod
+    def _validate_connector_networks(cls, value: list[str]) -> list[str]:
+        import ipaddress
+
+        networks: list[str] = []
+        for item in value:
+            try:
+                networks.append(str(ipaddress.ip_network(item, strict=False)))
+            except ValueError:
+                raise ValueError(f"CONNECTOR_ALLOWED_PRIVATE_NETWORKS entry is not a CIDR network: {item!r}") from None
+        return networks
+
+    @field_validator("connector_encryption_key", "connector_encryption_previous_keys")
+    @classmethod
+    def _validate_connector_keys(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        from app.connectors.security.credentials import parse_key
+
+        for part in value.get_secret_value().split(","):
+            if part.strip():
+                parse_key(part)  # raises a ValueError that never contains the key
+        return value
+
     @field_validator("log_level")
     @classmethod
     def _validate_log_level(cls, value: str) -> str:
@@ -214,6 +284,14 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
+    def _validate_connector_key_is_dedicated(self) -> Self:
+        key = self.connector_encryption_key
+        if key is not None and self.secret_key is not None:
+            if key.get_secret_value().strip() == self.secret_key.get_secret_value().strip():
+                raise ValueError("CONNECTOR_ENCRYPTION_KEY must not be the same value as SECRET_KEY")
+        return self
+
+    @model_validator(mode="after")
     def _validate_production_requirements(self) -> Self:
         if self.app_env is not Environment.PRODUCTION:
             return self
@@ -224,6 +302,10 @@ class Settings(BaseSettings):
             problems.append("SECRET_KEY must be set")
         if self.database_url is None:
             problems.append("DATABASE_URL must be set")
+        if self.connector_allow_http:
+            problems.append("CONNECTOR_ALLOW_HTTP must be false (connectors use HTTPS only)")
+        if any(_is_loopback_network(n) for n in self.connector_allowed_private_networks):
+            problems.append("CONNECTOR_ALLOWED_PRIVATE_NETWORKS must not include loopback networks")
         if self.auth_cookie_secure is False:
             problems.append("AUTH_COOKIE_SECURE must not be false (production requires HTTPS)")
         if problems:
@@ -255,8 +337,25 @@ class Settings(BaseSettings):
         return self.cors_origins[0] if self.cors_origins else "http://localhost:5173"
 
     @property
+    def connector_http_allowed(self) -> bool:
+        """Plain HTTP destinations: only when explicitly enabled in development or test."""
+        return self.connector_allow_http and self.app_env in (Environment.DEVELOPMENT, Environment.TEST)
+
+    @property
+    def connector_loopback_allowed(self) -> bool:
+        return self.app_env in (Environment.DEVELOPMENT, Environment.TEST)
+
+    @property
     def ai_configured(self) -> bool:
         return self.nvidia_api_key is not None and self.nvidia_model is not None
+
+
+def _is_loopback_network(network: str) -> bool:
+    import ipaddress
+
+    parsed = ipaddress.ip_network(network, strict=False)
+    loopback = ipaddress.ip_network("127.0.0.0/8") if parsed.version == 4 else ipaddress.ip_network("::1/128")
+    return parsed.overlaps(loopback)  # type: ignore[arg-type]
 
 
 @lru_cache

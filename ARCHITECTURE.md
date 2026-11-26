@@ -615,23 +615,128 @@ required fields, inactive ends, self-reference, type compatibility, duplicates i
 errors and warnings, confirmation, result summary, JSON download), and *Schema History*. Every action is shown only
 with its permission; the server enforces each request.
 
-## 8. External GET SQL API integration (planned)
+## 8. Company GET API connector (Module 07)
 
-OpsPilot does not connect to the company's business database. The company already has a backend endpoint that
-accepts SQL as a query parameter and returns results:
+The full operator guide (configuration example, response contract, encryption and rotation, SSRF deployment
+requirements, GET query-string risks) is [docs/CONNECTORS.md](docs/CONNECTORS.md). This section covers the design.
+
+### 8.1 Purpose and boundary
+
+OpsPilot does not connect to the company's business database and stores no database credentials. The company
+exposes an HTTPS GET endpoint that takes SQL as a query parameter and returns JSON. A connector stores how to
+call it, and the backend calls it with HTTPX. No public endpoint accepts SQL: the connection test takes no body
+and sends a fixed statement, and execution is reachable only in-process through a sealed `ValidatedQueryRequest`
+(8.6). SQL generation and the SQL security guard (section 10) are later modules.
+
+### 8.2 Data model
+
+- `external_api_connectors` (soft-deleted) holds:
+  - the name, description and associated `schema_source_id`;
+  - the base URL, endpoint path and `http_method`, with a check constraint that it is `'GET'`;
+  - the SQL parameter name and extra query parameters;
+  - the authentication type, the auth header name and `encrypted_credentials`;
+  - `custom_headers` as JSONB (plain values, or ciphertext for secret headers);
+  - the response contract, health check path, timeouts and size and SQL limits;
+  - the active flag and the last test status, time, error category and summary.
+- Database constraints enforce:
+  - credentials present exactly when the auth type needs them, and always starting with `v1:`;
+  - timeout ranges;
+  - unique live names (case-insensitive) and unique live base URL + path;
+  - **at most one active connector per schema source**.
+- `connector_audit_events` is append-only. It records the operation, status, error category and HTTP status,
+  the duration, the SQL fingerprint and length, the requesting user, and the execution and validation references.
+  It never holds credentials or SQL text.
+
+### 8.3 Layers
 
 ```
-GET https://company.example/api/query?sql=SELECT ...
+api/routes/connectors.py           thin handlers, require_permission(connector.*)
+services/connector_service.py      CRUD, merge-on-update, test workflow, execute(), key rotation, audit
+repositories/connector_repository  queries, filters, row locks
+connectors/
+  security/credentials.py          AES-256-GCM CredentialCipher (primary + previous keys)
+  security/destinations.py         DestinationPolicy: URL, allowlist, DNS and address checks
+  validators/config.py             paths, parameter and header names, values, field names
+  adapters/http_client.py          shared HTTPX AsyncClient with IP pinning, limits and error mapping
+  adapters/response.py             ResponseContract → NormalizedResult
+  adapters/execution.py            ConnectorExecutionAdapter: verifies trusted requests, builds and sends the GET
+  trusted.py                       ValidatedQueryRequest and ExecutionApprovalAuthority
+  errors.py                        ErrorCategory and ConnectorExecutionError
 ```
 
-OpsPilot will:
+### 8.4 HTTP client lifecycle
 
-1. Store the endpoint URL and its credentials as installation configuration (secrets never reach the browser).
-2. Call it from the backend with HTTPX, using timeouts, response-size limits and strict response parsing.
-3. Send only SQL that has passed the security pipeline below. There will never be an endpoint that forwards
-   arbitrary SQL from a client.
+- One `ConnectorHttpClient` per backend process. It is created in the FastAPI lifespan, stored on `app.state` and
+  closed on shutdown, and it pools connections (`CONNECTOR_POOL_MAX_CONNECTIONS` and `CONNECTOR_POOL_MAX_KEEPALIVE`).
+- The client is configured with:
+  - `trust_env=False`, so proxy environment variables are ignored;
+  - `follow_redirects=False`;
+  - a cookie policy that refuses every cookie;
+  - certificate verification from certifi plus the optional `CONNECTOR_CA_BUNDLE`, with TLS 1.2 or newer.
+- Each request has connect, read and overall timeouts, and the overall timeout is enforced with
+  `asyncio.timeout`.
+- The body is streamed and stops at the size limit.
+- Requests go to the validated IP, with the original `Host` header and the SNI host name (8.5).
+- Service methods commit their database transaction before any network call, so no row lock or pooled database
+  connection is held while the company API is called.
 
-The company keeps full control: its API decides which database user runs the query and can add its own limits.
+### 8.5 Destination policy (SSRF)
+
+The policy is enforced at save time (static checks) and again on every request (DNS):
+
+- **Scheme:** HTTPS only. HTTP is allowed only in development or test with `CONNECTOR_ALLOW_HTTP`.
+- **Hosts:** the host must be in `CONNECTOR_ALLOWED_HOSTS`, which denies everything when it is empty.
+- **Addresses:** every resolved address must pass.
+  - Private ranges need `CONNECTOR_ALLOWED_PRIVATE_NETWORKS`.
+  - Loopback is allowed only in development or test.
+  - Link-local, multicast, reserved and unspecified addresses are always refused.
+- **DNS rebinding:** the connection is pinned to the validated address.
+
+A connector whose destination no longer passes, for example after the allowlist changes, shows the problem on its
+page and cannot be tested or used.
+
+### 8.6 Trusted execution boundary
+
+- `ValidatedQueryRequest` is a frozen, strict Pydantic model. It carries the connector, schema source and version,
+  the requesting user, the validation and permission references, the issuer, the approval time and the exact SQL.
+- `ExecutionApprovalAuthority` seals each request with HMAC-SHA256 under a random key that exists only in the running
+  process. Requests are not serialisable across processes.
+- Before anything is sent, the adapter rejects a request when:
+  - the seal is missing or does not match;
+  - the issuer is unknown;
+  - the request is expired (older than 120 s);
+  - the connector, schema source or version does not match;
+  - the connector is inactive (except for the connection test);
+  - the SQL is empty or contains NUL;
+  - the SQL is over the length limit (`request_too_large`).
+- The only issuer today is `connector_test`, and it may seal only `SELECT 1 AS opspilot_connection_test`. The SQL
+  security guard module will register its own issuer.
+- `ConnectorService.execute()` audits every attempt, including rejected ones, with a SHA-256 fingerprint of the SQL.
+
+### 8.7 Credential encryption
+
+- AES-256-GCM, with a random nonce per value and associated data `opspilot:connector:<id>:<purpose>`.
+- Stored values use the format `v1:<key id>:<nonce>:<ciphertext>`.
+- The key is `CONNECTOR_ENCRYPTION_KEY`, distinct from `SECRET_KEY`. Previous keys stay decrypt-only until
+  `python -m app.cli rotate-connector-keys` re-encrypts everything.
+- If the key is missing, operations that need it fail with 503. Nothing is stored in plaintext.
+- Responses expose only `has_credentials` and a fixed mask. Updates keep a credential or secret header value when
+  it is omitted.
+
+### 8.8 Permissions and frontend
+
+- Permissions are `connector.read`, `create`, `update`, `delete`, `test` and `activate`. They are seeded by
+  migration 0005, granted to Administrator, and enforced through the Module 04 engine.
+- **Connectors** (`/admin/connectors`, needs `connector.read`) has search, status, authentication and last-test
+  filters, and pagination.
+- The create and edit dialog:
+  - masks secret fields and never prefills credentials;
+  - shows an "empty keeps the stored value" note for each stored secret;
+  - shows the server's approved hosts;
+  - shows a warning about SQL travelling in the URL.
+- The **Connector** page shows the masked configuration, connection status, the last test, a step-by-step test
+  result, Activate/Deactivate, Edit, Delete with confirmation, and the audit activity. Each action appears only with
+  its permission.
 
 ## 9. Planned modular backend architecture
 
@@ -656,8 +761,8 @@ Planned modules (subject to the project owner's sequencing):
 | --- | --- |
 | Authentication and users | **Implemented (Module 03, section 4)** |
 | Roles and permissions | **Implemented (Module 04, section 5)** |
-| Schema registry | Registering the company's table and column metadata used for SQL generation |
-| External API integration | Configured client for the company's GET SQL endpoint |
+| Schema registry | **Implemented (Module 06, section 7)** |
+| External API integration | **Implemented (Module 07, section 8)** |
 | LLM integration | NVIDIA-hosted model client (`NVIDIA_BASE_URL`, `NVIDIA_MODEL`, `NVIDIA_API_KEY`) |
 | SQL generation | Question + relevant schemas → candidate SQL |
 | SQL security guard | Independent validation and authorization of generated SQL |

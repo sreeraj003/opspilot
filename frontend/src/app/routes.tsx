@@ -1,6 +1,8 @@
 import type { RouteObject } from "react-router";
 
 import {
+  ConnectorDetailPage,
+  ConnectorsPage,
   PermissionEditorPage,
   PermissionsPage,
   RoleDetailPage,
@@ -109,6 +111,15 @@ export const routes: RouteObject[] = [
                     children: [
                       { index: true, element: <SchemasPage /> },
                       { path: ":schemaId", element: <SchemaDetailPage />, handle: crumb("Schema details") },
+                    ],
+                  },
+                  {
+                    path: "connectors",
+                    element: <RequirePermission permission="connector.read" />,
+                    handle: crumb("Connectors"),
+                    children: [
+                      { index: true, element: <ConnectorsPage /> },
+                      { path: ":connectorId", element: <ConnectorDetailPage />, handle: crumb("Connector details") },
                     ],
                   },
                 ],

@@ -10,3 +10,5 @@ export const PermissionsPage = lazy(() => import("@/pages/PermissionsPage").then
 export const SchemasPage = lazy(() => import("@/pages/SchemasPage").then((m) => ({ default: m.SchemasPage })));
 export const SchemaDetailPage = lazy(() => import("@/pages/SchemaDetailPage").then((m) => ({ default: m.SchemaDetailPage })));
 export const PermissionEditorPage = lazy(() => import("@/pages/PermissionEditorPage").then((m) => ({ default: m.PermissionEditorPage })));
+export const ConnectorsPage = lazy(() => import("@/pages/ConnectorsPage").then((m) => ({ default: m.ConnectorsPage })));
+export const ConnectorDetailPage = lazy(() => import("@/pages/ConnectorDetailPage").then((m) => ({ default: m.ConnectorDetailPage })));
