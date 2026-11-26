@@ -7,6 +7,7 @@ seen by ``alembic revision --autogenerate``.
 from app.models.ai_usage import AIUsageRecord
 from app.models.application_setting import ApplicationSetting
 from app.models.auth_event import AuthEvent
+from app.models.business_term import BusinessTerm, QuestionUnderstandingEvent
 from app.models.connector import ConnectorAuditEvent, ExternalAPIConnector
 from app.models.password_reset_token import PasswordResetToken
 from app.models.rbac import (
@@ -33,10 +34,12 @@ __all__ = [
     "ApplicationSetting",
     "AuthEvent",
     "AuthorizationState",
+    "BusinessTerm",
     "ConnectorAuditEvent",
     "ExternalAPIConnector",
     "PasswordResetToken",
     "PermissionDefinition",
+    "QuestionUnderstandingEvent",
     "RbacAuditEvent",
     "RetiredRefreshToken",
     "Role",

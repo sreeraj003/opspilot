@@ -93,6 +93,10 @@ export const ADMIN_PERMISSIONS: Permission[] = [
   "ai.provider.read",
   "ai.provider.test",
   "ai.usage.read",
+  "ai.question.understand",
+  "ai.question.preview",
+  "business_term.read",
+  "business_term.manage",
 ];
 
 export function makeCurrentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {

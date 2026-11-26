@@ -48,6 +48,8 @@ class ProviderConfig:
     is_active: bool
     # Environment variables still missing before this provider can be used.
     missing_settings: tuple[str, ...] = ()
+    # Send "response_format": {"type": "json_object"} when a caller asks for JSON (AI_JSON_RESPONSE_FORMAT).
+    json_response_format: bool = False
     api_key: SecretStr | None = field(default=None, repr=False)
 
     @property
@@ -85,9 +87,10 @@ class ProviderConfigService:
 
     # --- per provider -------------------------------------------------------------------------
 
-    def _common(self) -> dict[str, float | int]:
+    def _common(self) -> dict[str, float | int | bool]:
         s = self._settings
         return {
+            "json_response_format": s.ai_json_response_format,
             "temperature": s.ai_temperature,
             "max_output_tokens": s.ai_max_output_tokens,
             "timeout_seconds": s.ai_request_timeout_seconds,

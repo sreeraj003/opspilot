@@ -106,6 +106,7 @@ class LLMService:
         max_tokens: int | None = None,
         model: str | None = None,
         metadata: dict[str, MetadataValue] | None = None,
+        response_format: str = "text",
         operation: str = "generate",
         user_id: uuid.UUID | None = None,
     ) -> LLMGenerationResponse:
@@ -115,7 +116,7 @@ class LLMService:
         Raises ``LLMRequestValidationError`` (422) for an invalid request and a
         ``ProviderError`` subclass when the provider cannot produce an answer.
         """
-        validated = self._validate(request, messages, temperature, max_tokens, model, metadata)
+        validated = self._validate(request, messages, temperature, max_tokens, model, metadata, response_format)
         provider = self.provider()
         config = provider.config
         effective_model = validated.model or config.model or ""
@@ -149,12 +150,15 @@ class LLMService:
         while True:
             attempt += 1
             try:
+                # json_output is passed only when asked for, so providers written for Module 08 keep working.
+                extra: dict[str, Any] = {"json_output": True} if validated.response_format == "json_object" else {}
                 completion = await provider.generate(
                     validated.messages,
                     model=effective_model,
                     temperature=effective_temperature,
                     max_tokens=effective_max_tokens,
                     request_id=request_id,
+                    **extra,
                 )
                 break
             except ProviderError as exc:
@@ -265,6 +269,7 @@ class LLMService:
         max_tokens: int | None,
         model: str | None,
         metadata: dict[str, MetadataValue] | None,
+        response_format: str = "text",
     ) -> LLMGenerationRequest:
         if request is not None:
             if messages is not None:
@@ -278,6 +283,7 @@ class LLMService:
                     "max_tokens": max_tokens,
                     "model": model,
                     "metadata": metadata or {},
+                    "response_format": response_format,
                 }
             )
         except ValidationError as exc:

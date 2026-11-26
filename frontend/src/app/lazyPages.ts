@@ -13,3 +13,5 @@ export const PermissionEditorPage = lazy(() => import("@/pages/PermissionEditorP
 export const ConnectorsPage = lazy(() => import("@/pages/ConnectorsPage").then((m) => ({ default: m.ConnectorsPage })));
 export const ConnectorDetailPage = lazy(() => import("@/pages/ConnectorDetailPage").then((m) => ({ default: m.ConnectorDetailPage })));
 export const AIProviderPage = lazy(() => import("@/pages/AIProviderPage").then((m) => ({ default: m.AIProviderPage })));
+export const BusinessTermsPage = lazy(() => import("@/pages/BusinessTermsPage").then((m) => ({ default: m.BusinessTermsPage })));
+export const QuestionPreviewPage = lazy(() => import("@/pages/QuestionPreviewPage").then((m) => ({ default: m.QuestionPreviewPage })));

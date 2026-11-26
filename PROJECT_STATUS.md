@@ -2,10 +2,132 @@
 
 ## Current module
 
-**Module 08: AI provider integration and LLM service layer.** Implemented and verified on 2026-11-26. Awaiting the
-project owner's review. Module 09 has not been started.
+**Module 09: AI question understanding and business intent extraction.** Implemented and verified on 2026-11-26.
+Awaiting the project owner's review. Module 10 has not been started.
 
-Built on `main` with Modules 01 to 07 merged. Modules 01 to 07 keep their behaviour. Earlier records are kept below.
+Built on the Module 08 branch (PR #8, not yet merged when this was written), with Modules 01 to 07 merged to `main`.
+Modules 01 to 08 keep their behaviour. Earlier records are kept below.
+
+## Module 09: what was implemented
+
+References: [docs/QUESTION_UNDERSTANDING.md](docs/QUESTION_UNDERSTANDING.md), ARCHITECTURE.md section 10, README
+"Question understanding".
+
+- **Understanding module** (`backend/app/ai/understanding/`): `schemas/`, `services/`, `prompts/`, `validators/`,
+  `normalizers/`; tests in `backend/tests/understanding/`. It reuses Module 08's `LLMService`, Module 06's schema
+  registry and Module 04's authorization engine; nothing is duplicated.
+- **BusinessIntent** (strict Pydantic): request info (intent id, original and normalized question, intent type,
+  confidence, clarification flag, schema source and version), data requirements (metrics, dimensions, attributes,
+  candidate tables and columns), filters, time context (resolved range, comparison period, granularity, date
+  column), aggregation (type, grouping, sorting, limit), interpretation fields (business context, assumptions,
+  ambiguities, clarification question) and a permission context that is explicitly not an authorization token.
+- **Intent types**: `metric_lookup`, `aggregation`, `comparison`, `trend_analysis`, `ranking`, `filtering`,
+  `distribution`, `detail_lookup`, `unknown`. No hard-coded questions.
+- **Schema-aware understanding.** Deterministic keyword relevance selection over permitted tables only (replaceable
+  `SchemaRelevanceSelector`, no vector database or RAG), related tables kept for join paths, schema version
+  preserved. Unknown tables and columns are rejected.
+- **Business terminology.** `business_terms` model, service and API (name, description, kind, synonyms, schema
+  source, related tables and columns validated against the registry, default aggregation, guidance, active status,
+  stale-reference reporting). Matching prefers longer phrases; a shared synonym makes the AI ask. Undefined concepts
+  are never mapped.
+- **Time.** Deterministic resolution of today, yesterday, this/last week, month, quarter and year, last N
+  days/weeks/months/years, named months, quarters and years, explicit ranges and comparison periods; half-open
+  ranges, ISO weeks, calendar vs rolling, year transitions, leap years, original expression preserved. Business
+  timezone: `business.timezone` setting (admin-editable, validated) → `BUSINESS_TIMEZONE` → `UTC`.
+- **Clarification engine.** Priority rules (ambiguous term, missing definition, comparison without period, ranking
+  without measure, unclear request, model's own question when the backend cannot answer it); one question at a
+  time with a stable key; answered keys are never asked again; original question preserved; no conversation memory.
+- **Permissions.** The prompt contains only permitted tables and columns (no policies or row filters). No data
+  access or a term on restricted data ends before the model call. Restricted references in the model's output are
+  blocking and reported generically. The final intent is re-authorized with the permission engine. Row filters and
+  export flags are preserved in the permission context.
+- **Strict output validation.** Strict JSON extraction, strict schema (types, enums, ranges, unknown fields),
+  executable-content detection (SQL, comments, SQL functions, code, templates, markup, tool and injection phrases)
+  in every text field, semantic validation (identifiers, term columns, aggregations by column type, filter operators
+  and values, granularity, dates, sort targets, time expression present in the question), at most
+  `AI_UNDERSTAND_MAX_CORRECTIONS` correction turns, never for unsafe or restricted output. Invalid output is never
+  used.
+- **Module 08 change (additive):** `LLMService.generate()` accepts `response_format="json_object"`; the
+  OpenAI-compatible adapter sends `response_format: {"type": "json_object"}` only when `AI_JSON_RESPONSE_FORMAT=true`.
+  Default behaviour is unchanged.
+- **Observability.** `question_understanding_events` (request id, intent id, user, schema source and version,
+  provider, model, latency, attempts, intent type, confidence, status, clarification, validation outcome, error
+  category; never the question text, prompt, output, credentials or policies) and the log event
+  `ai.understanding.completed`. Model calls are also in `ai_usage_records` (`question_understanding`).
+- **Frontend.** **Administration → Business terms** (`/admin/business-terms`): list, search, schema/kind/status
+  filters, stale-field warnings, create/edit dialog with fields chosen from the registered schema, synonyms,
+  aggregation and guidance, activate/deactivate, delete; controls shown only with `business_term.manage`.
+  **Administration → Question preview** (`/admin/question-preview`): schema and question, status, intent, metrics,
+  dimensions, filters, time, sorting, assumptions, ambiguities, clarification (mark as answered), validation issues,
+  permission status, diagnostics, business timezone (editable with `settings:manage`).
+
+### Tables
+
+`business_terms`, `question_understanding_events`.
+
+### Migrations
+
+`0007_create_business_terms_and_question_understanding`
+(`2026_11_26_0007_create_business_terms_and_question_understanding.py`): creates both tables, their checks and
+indexes (unique live term name per schema, case-insensitive); inserts `ai.question.understand`,
+`ai.question.preview`, `business_term.read`, `business_term.manage`, grants them to Administrator and bumps the
+authorization revision. `downgrade()` removes all of this.
+
+### API endpoints (under `/api/v1`)
+
+`POST /ai/understand` (`ai.question.understand`); `POST /ai/understand/preview` (`ai.question.preview`);
+`GET /ai/understand/options` (either); `GET /business-terms`, `GET /business-terms/{id}` (`business_term.read`);
+`GET /business-terms/schema-fields`, `POST /business-terms`, `PATCH /business-terms/{id}`,
+`DELETE /business-terms/{id}` (`business_term.manage`). The setting `business.timezone` uses the existing settings
+API and is validated.
+
+### New configuration and dependencies
+
+New settings, in `.env.example` (with notes) and `docker-compose.yml`: `BUSINESS_TIMEZONE` (default `UTC`),
+`AI_UNDERSTAND_RATE_LIMIT_PER_USER` (20 per minute), `AI_UNDERSTAND_MAX_SCHEMA_TABLES` (12),
+`AI_UNDERSTAND_MAX_CORRECTIONS` (1), `AI_UNDERSTAND_MAX_OUTPUT_TOKENS` (1500), `AI_JSON_RESPONSE_FORMAT` (false). New
+runtime dependency: `tzdata==2026.6` (IANA timezone data for `zoneinfo`, independent of the OS image).
+
+### Commands executed and results (Module 09)
+
+| Command | Result |
+| --- | --- |
+| `pytest -q` with `TEST_DATABASE_URL` (PostgreSQL 16) | **791 passed, 1 skipped** (677 before; 114 added, 3 updated for the new tables, permissions and migration head; the skip is the opt-in live test) |
+| `pytest -q tests/understanding` | **114 passed** |
+| `pytest -q` without a test database | 428 passed, 364 skipped (database tests and the live test) |
+| `alembic upgrade head`, `alembic check`, `alembic downgrade -1`, `alembic upgrade head` | OK (`0006 → 0007`, no drift, back to `0006`, up again; also covered by `tests/database/test_migrations.py`) |
+| `npx vitest run` | **224 passed** in 33 files (209 before; 15 added) |
+| `npx tsc -b` | OK, no errors |
+| `npm run lint` | OK, 0 errors, 0 warnings |
+| `npm run build` | OK, both pages lazy-loaded |
+
+**Backend tests added:** time resolution (every expression, boundaries, ISO weeks, year transitions, leap years,
+rolling clamps, comparisons, timezones), strict parsing and executable-content detection, semantic validation
+(unknown tables, columns and terms, restricted fields, filters, aggregations, time, sorting, term columns),
+relevance selection, term matching and ambiguity, permission view, prompt contents (no denied columns, policies or
+row filters), clarification rules (one at a time, never repeated), and the API end to end with a mocked provider:
+metric lookup, aggregation, comparison, trend, ranking, filtering and detail lookup, clarification, access denial before and after the model, unsafe output, malformed JSON with
+correction, correction limit, provider timeout and failures, rate limiting, preview diagnostics, audit rows without
+question text, business timezone setting, JSON mode, terms CRUD, conflicts, stale references and permissions. No
+live model call is needed or made.
+
+**Frontend tests added:** term list, search and filters, create with schema field association, server validation
+messages on edit, activate/deactivate and delete, permission-based controls, loading/empty/error states, route
+guard; preview submission and intent rendering, clarification rendering and "mark as answered", access denied and
+validation issues, client validation and API errors, options loading/empty/error, timezone editing and read-only
+view, route guard.
+
+### Known limitations (Module 09)
+
+- No live NVIDIA call was made (no key in this environment). Real models may need prompt tuning; the preview page
+  and `pytest -m live_ai` (Module 08) are the way to check with a real key.
+- Relevance selection is keyword based; synonyms of table names that appear nowhere in the schema or terms are not
+  understood until a business term defines them.
+- Clarification is one round per request: the client resends the question with the answered keys or a rephrased
+  question. Free-text answers are not merged into the question (no conversation memory, by design).
+- Time expressions are limited to the documented kinds (no fiscal years, "week to date" or relative weekdays).
+- The interpretation rate limit is per backend process, like the other limits.
+- The intent is not yet consumed by anything: SQL generation is a later module.
 
 ## Module 08: what was implemented
 
@@ -95,7 +217,7 @@ request refused, usage table and summary, empty usage, permission-based sections
 ### Known limitations (Module 08)
 
 - Provider configuration is environment-only; changes need a backend restart. No database-stored provider configs.
-- No streaming, tool calls or JSON mode; only the first choice is used.
+- No streaming or tool calls; only the first choice is used. (Module 09 added opt-in JSON mode.)
 - Reasoning models that return `content: null` are reported as malformed responses.
 - The health check proves reachability and lists models; only the test prompt proves the key.
 - The test-run rate limit is per backend process.

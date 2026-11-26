@@ -626,7 +626,7 @@ OpsPilot does not connect to the company's business database and stores no datab
 exposes an HTTPS GET endpoint that takes SQL as a query parameter and returns JSON. A connector stores how to
 call it, and the backend calls it with HTTPX. No public endpoint accepts SQL: the connection test takes no body
 and sends a fixed statement, and execution is reachable only in-process through a sealed `ValidatedQueryRequest`
-(8.6). SQL generation and the SQL security guard (section 11) are later modules.
+(8.6). SQL generation and the SQL security guard (section 12) are later modules.
 
 ### 8.2 Data model
 
@@ -804,7 +804,115 @@ Administrator by migration `0006`. **AI provider** (`/admin/ai`, shown with any 
 latency, reported usage) and a usage table with totals. Each part appears only with its permission; the server
 enforces every request.
 
-## 10. Planned modular backend architecture
+## 10. Question understanding and business intent (Module 09)
+
+The full guide (API, BusinessIntent, intent types, terminology, time rules, clarification rules, output contract,
+samples) is [docs/QUESTION_UNDERSTANDING.md](docs/QUESTION_UNDERSTANDING.md). This section covers the design.
+
+### 10.1 Boundary
+
+Module 09 turns one question into a validated `BusinessIntent`. It reuses Module 08's `LLMService` (no new provider
+code), Module 06's `SchemaRegistryService.outline()` (no second schema store) and Module 04's
+`AuthorizationEngine` (`ai_authorization_context()` and `authorize()`; no second permission system). It generates
+and executes no SQL, never calls the company connector, keeps no conversation memory and uses no embeddings, vector
+store, RAG or agent framework. The model proposes; backend code decides.
+
+### 10.2 Layers
+
+```
+app/api/routes/understanding.py        POST /ai/understand, POST /ai/understand/preview, GET /ai/understand/options
+app/api/routes/business_terms.py       business term CRUD and schema-fields
+app/ai/understanding/
+  schemas/intent.py                    BusinessIntent and enums (strict Pydantic)
+  schemas/llm_output.py                the model's JSON contract (strict, extra fields forbidden)
+  schemas/terms.py, schemas/api.py     API contracts
+  services/understanding_service.py    the pipeline (ARCHITECTURE 10.3), audit, logging
+  services/schema_context.py           read-only view of the registered schema (one load per request)
+  services/permission_view.py          the user's AI authorization context mapped onto registered tables
+  services/schema_relevance.py         SchemaRelevanceSelector protocol + KeywordSchemaRelevanceSelector
+  services/terminology_service.py      term CRUD, reference validation, term matching
+  services/clarification.py            ClarificationEngine (priority rules, keys, no repeats)
+  services/timezone_service.py         business timezone: setting -> environment -> UTC
+  prompts/understanding_prompt.py      system prompt, context payload, correction messages
+  validators/safety.py                 executable-content detection (SQL, code, markup, injection phrases)
+  validators/intent_validator.py       semantic validation against schema, terms and permissions
+  normalizers/time_resolver.py         deterministic date resolution
+  normalizers/json_output.py, text.py  strict JSON extraction; question normalisation and tokens
+app/models/business_term.py            BusinessTerm, QuestionUnderstandingEvent
+```
+
+### 10.3 Pipeline
+
+Validate the question → load the schema → load the user's permissions (no data access: stop) → match active terms
+(term on restricted data: safe denial) → select relevant permitted tables → prompt the model (temperature 0, JSON
+only, `AI_UNDERSTAND_MAX_OUTPUT_TOKENS`) → parse strictly → validate semantically and resolve time → bounded
+correction (`AI_UNDERSTAND_MAX_CORRECTIONS`, never for unsafe content or restricted fields) → clarification →
+re-authorize tables, columns and operation with the permission engine → respond, audit, log. Only the model call is
+non-deterministic; every other step is plain code with unit tests.
+
+### 10.4 Schema relevance
+
+`KeywordSchemaRelevanceSelector` scores only tables the user may see, with documented weights: table name (6),
+tables of matched business terms (8), column names (3 each, up to 4), table description or business purpose words
+and column description or business meaning words (1 each, up to 3), then adds directly related tables
+(relationships) so join paths survive. When all permitted tables fit within `AI_UNDERSTAND_MAX_SCHEMA_TABLES`
+they are all sent, best first (`all_tables`); otherwise the top-scoring ones are (`keyword`). The selector is behind
+a protocol, so a future implementation (for example embeddings) can replace it without touching the pipeline.
+The schema version is carried into the intent.
+
+### 10.5 Terminology
+
+`business_terms` (migration `0007`): one row per term per schema source, unique live name (case-insensitive), JSONB
+synonyms and related tables/columns stored canonically, optional default aggregation and plain-language guidance,
+active flag, soft delete, creator/updater. References are validated against the registered schema on write and
+re-checked on read (`stale_references`). At question time, matching consumes the longest phrases first; a phrase
+shared by several terms becomes an ambiguity. A term's registered aggregation and columns take precedence over the
+model's choice.
+
+### 10.6 Time behaviour
+
+The model names the expression and its kind; `TimeResolver` computes the dates in the business timezone relative to
+an explicit reference instant (never the server's local zone). Ranges are half-open `[start, end)`; ISO weeks;
+calendar quarters; calendar periods are whole periods (`is_partial` when they contain today); rolling windows
+`[tomorrow − N units, tomorrow)` include today and clamp month ends; named months/quarters without a year mean the
+most recent started one; comparison periods are the previous period of the same kind or the same period last year.
+The business timezone comes from the `business.timezone` application setting, else `BUSINESS_TIMEZONE`, else `UTC`,
+and is validated as an IANA name. `tzdata` is a runtime dependency so this does not depend on the OS image.
+
+### 10.7 Clarification
+
+`ClarificationEngine` evaluates, in order: ambiguous term, missing definition, comparison without period, ranking
+without measure, unclear request, and finally the model's own question (only when the backend cannot answer it).
+Exactly one question is returned with a stable key; keys the client reports in `answered_clarifications` are never
+asked again, and once all are exhausted the result is `unresolved_after_clarification`.
+
+### 10.8 Permissions
+
+The prompt contains only permitted tables and columns, never policies or row filters. The model's output is checked
+against the same view; any restricted reference is blocking and reported generically. The final intent is
+re-authorized with `AuthorizationEngine.authorize()` (`database_data`, operation `aggregate` or `read`).
+`permission_context` keeps row filters and export flags for later modules and states `is_authorization_token:
+false`: later modules must authorize again. The four new delegable permissions are `ai.question.understand`,
+`ai.question.preview`, `business_term.read` and `business_term.manage`.
+
+### 10.9 Observability
+
+`question_understanding_events` (migration `0007`) stores one outcome row per interpretation (no question text,
+prompt, output, credentials or policies), written in its own transaction so an audit failure never fails the
+request. The log event `ai.understanding.completed` carries the same fields. Module 08 additionally records the model
+call in `ai_usage_records` under the operation `question_understanding`.
+
+### 10.10 Frontend
+
+**Business terms** (`/admin/business-terms`, `business_term.read`): list with search and schema/kind/status filters,
+stale-field warnings, and, with `business_term.manage`, create/edit dialog (schema, name, description, kind,
+synonyms, fields chosen from the registered schema, default aggregation, guidance, active), activate/deactivate and
+delete. **Question preview** (`/admin/question-preview`, `ai.question.preview`): choose a schema, enter a question and
+see the status, intent, metrics, dimensions, filters, time, sorting, assumptions, ambiguities, clarification (with
+"mark as answered"), validation issues, permission status and diagnostics; the business timezone is shown and, with
+`settings:manage`, editable. Each preview is one model request and runs only on submit.
+
+## 11. Planned modular backend architecture
 
 The backend is a modular monolith. Each business module adds its own routes, schemas, services and models in
 the existing layers:
@@ -830,6 +938,7 @@ Planned modules (subject to the project owner's sequencing):
 | Schema registry | **Implemented (Module 06, section 7)** |
 | External API integration | **Implemented (Module 07, section 8)** |
 | LLM integration | **Implemented (Module 08, section 9)** |
+| Question understanding | **Implemented (Module 09, section 10)** |
 | SQL generation | Question + relevant schemas → candidate SQL |
 | SQL security guard | Independent validation and authorization of generated SQL |
 | Conversations and answers | Chat history, natural-language answers, charts (Recharts) |
@@ -837,7 +946,7 @@ Planned modules (subject to the project owner's sequencing):
 Rules for every module: route handlers stay thin, logic lives in services, persistence lives in repositories,
 dependencies are injected through `app/api/deps.py`, and no module imports another module's routes.
 
-## 11. Planned SQL security execution pipeline
+## 12. Planned SQL security execution pipeline
 
 Generated SQL is untrusted input. Before anything reaches the company API it passes a pipeline that is
 independent of the LLM and cannot be skipped:
@@ -846,7 +955,7 @@ independent of the LLM and cannot be skipped:
 Question
   │
   ▼
-1. Understand the question                (LLM)
+1. Understand the question                (LLM, validated by the backend: Module 09)
 2. Retrieve relevant registered schemas    (schema registry, filtered by the user's permissions)
 3. Generate SQL                            (LLM)
   │

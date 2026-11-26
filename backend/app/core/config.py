@@ -181,6 +181,23 @@ class Settings(BaseSettings):
     ai_retry_max_wait_seconds: float = Field(default=20.0, ge=0.0, le=120.0)
     # Administrator "test provider" runs allowed per user per 5 minutes (each run spends tokens).
     ai_test_rate_limit_per_user: int = Field(default=10, ge=1, le=1000)
+    # Ask the provider for a JSON object ("response_format": {"type": "json_object"}) when a
+    # feature needs structured output. Off by default: not every model behind an
+    # OpenAI-compatible endpoint accepts it. Output is validated strictly either way.
+    ai_json_response_format: bool = False
+
+    # --- Question understanding (Module 09). See ARCHITECTURE.md section 10. -----------------
+    # Timezone used to resolve "today", "last month", ... when the application setting
+    # "business.timezone" is not set. An IANA name; never the server's local timezone.
+    business_timezone: str = "UTC"
+    # Questions each user may submit for interpretation per minute (each one is an LLM call).
+    ai_understand_rate_limit_per_user: int = Field(default=20, ge=1, le=1000)
+    # Most tables sent to the model as context for one question (relevance-ranked).
+    ai_understand_max_schema_tables: int = Field(default=12, ge=1, le=100)
+    # Bounded correction requests when the model's output fails validation. 0 disables them.
+    ai_understand_max_corrections: int = Field(default=1, ge=0, le=3)
+    # Output token ceiling for one interpretation (still capped by AI_MAX_OUTPUT_TOKENS).
+    ai_understand_max_output_tokens: int = Field(default=1500, ge=256, le=32768)
 
     @field_validator(
         "database_url",
@@ -273,6 +290,17 @@ class Settings(BaseSettings):
         for part in value.get_secret_value().split(","):
             if part.strip():
                 parse_key(part)  # raises a ValueError that never contains the key
+        return value
+
+    @field_validator("business_timezone")
+    @classmethod
+    def _validate_business_timezone(cls, value: str) -> str:
+        from app.core.timezones import timezone_problem
+
+        value = value.strip()
+        problem = timezone_problem(value)
+        if problem is not None:
+            raise ValueError(problem)
         return value
 
     @field_validator("log_level")

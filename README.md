@@ -387,6 +387,30 @@ costs).
 Architecture, NVIDIA setup, every variable, error and retry rules, how to add a provider and how to test:
 [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md).
 
+## Question understanding
+
+OpsPilot turns a business question into a validated, structured **business intent**: metrics, dimensions, filters,
+resolved dates, sorting, assumptions and, when something is unclear, one clarification question. It uses only
+registered schemas, registered business terms and the asking user's own data permissions. It does not generate or
+run SQL and is not a chatbot.
+
+1. Under **Administration → Business terms**, define what words such as "Revenue" or "Active customer" mean: a
+   description, synonyms, the registered tables and columns that define them and the default aggregation. The AI
+   never invents a definition; an undefined or ambiguous term leads to a clarification question.
+2. Under **Administration → Question preview**, pick a schema, enter a question and inspect the interpretation, its
+   validation and permission status. Administrators with `settings:manage` set the business timezone there (default
+   `UTC`, or `BUSINESS_TIMEZONE` in `.env`), used to resolve "yesterday", "last month" and similar.
+
+| Endpoint (under `/api/v1`) | Permission | Purpose |
+| --- | --- | --- |
+| `POST /ai/understand` | `ai.question.understand` | Interpret a question |
+| `POST /ai/understand/preview` | `ai.question.preview` | The same with diagnostics |
+| `GET /ai/understand/options` | either | Schemas and business timezone |
+| `GET`/`POST /business-terms`, `GET`/`PATCH`/`DELETE /business-terms/{id}` | `business_term.read` / `business_term.manage` | Business terms |
+
+Contract, intent types, time rules, clarification rules, model output contract and samples:
+[docs/QUESTION_UNDERSTANDING.md](docs/QUESTION_UNDERSTANDING.md).
+
 ## Application database
 
 OpsPilot's own PostgreSQL 16 database (never the company's business database). The backend uses async SQLAlchemy 2.x
