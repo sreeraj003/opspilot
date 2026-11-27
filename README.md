@@ -411,6 +411,25 @@ run SQL and is not a chatbot.
 Contract, intent types, time rules, clarification rules, model output contract and samples:
 [docs/QUESTION_UNDERSTANDING.md](docs/QUESTION_UNDERSTANDING.md).
 
+## SQL generation
+
+OpsPilot turns an interpreted question into **candidate SQL** for the schema's database (PostgreSQL, MySQL or SQL
+Server). Generated SQL is **untrusted**: it is never executed by this step, never sent to the company API and must
+pass the SQL security guard (a later module) first.
+
+Under **Administration → SQL generation**, pick a schema and ask a question. OpsPilot interprets it, generates SQL
+from the stored interpretation using only the registered tables and columns you may see, validates it with SQLGlot
+and shows it as "Generated — Awaiting Security Validation", with tables, columns, joins and assumptions. The SQL
+text is shown only when your data permission allows viewing SQL (`allow_sql_view`).
+
+| Endpoint (under `/api/v1`) | Permission | Purpose |
+| --- | --- | --- |
+| `POST /ai/sql/generate` | `ai.sql.generate` | Generate SQL for a stored intent (`intent_id`, `schema_source_id`) |
+| `GET /ai/sql/generations/{id}` | `ai.sql.generate` | One of your generations |
+| `POST /ai/sql/generations/{id}/regenerate` | `ai.sql.generate` | Generate again (bounded) |
+
+Contract, dialects, validation rules, limitations and configuration: [docs/SQL_GENERATION.md](docs/SQL_GENERATION.md).
+
 ## Application database
 
 OpsPilot's own PostgreSQL 16 database (never the company's business database). The backend uses async SQLAlchemy 2.x

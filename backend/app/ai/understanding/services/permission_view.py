@@ -13,10 +13,14 @@ user holds counts: Module 04 does not reserve a particular action name for
 querying.
 """
 
+import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from app.ai.understanding.services.schema_context import ColumnInfo, SchemaContext, TableInfo
+from app.authorization.engine import AuthorizationDecision, AuthorizationEngine, AuthorizationRequest
+from app.authorization.policy import DATA_RESOURCE_TYPE
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,3 +117,41 @@ class PermissionView:
             if entry.action == action:
                 return f"{entry.policy_table}.{entry.spelling.get(column.lower(), column)}"
         return f"{qualified_table}.{column}"
+
+
+async def authorize_references(
+    engine: AuthorizationEngine,
+    user_id: uuid.UUID,
+    permissions: PermissionView,
+    referenced: Mapping[str, set[str]],
+    operation: str,
+    *,
+    sql_view: bool = False,
+) -> AuthorizationDecision | None:
+    """Ask the permission engine for exactly these tables, columns and operation.
+
+    ``referenced`` maps qualified registered tables to column names. Any
+    ``database_data`` action the user holds may allow it; the first allowing
+    decision is returned, otherwise ``None``. Used by question understanding
+    (Module 09) and SQL generation (Module 10); the SQL security guard
+    authorizes again at execution time.
+    """
+    for action in permissions.actions():
+        tables: list[str] = []
+        columns: list[str] = []
+        for table, names in referenced.items():
+            policy_table = permissions.policy_table(table, action)
+            if policy_table is None:
+                break
+            tables.append(policy_table)
+            columns.extend(permissions.policy_column(table, action, name) for name in sorted(names))
+        else:
+            decision = await engine.authorize(
+                AuthorizationRequest(
+                    user_id=user_id, resource_type=DATA_RESOURCE_TYPE, action=action,
+                    tables=tuple(tables), columns=tuple(columns), operation=operation, sql_view=sql_view,
+                )
+            )
+            if decision.allowed:
+                return decision
+    return None

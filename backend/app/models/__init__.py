@@ -19,6 +19,7 @@ from app.models.rbac import (
     UserPermission,
     UserRole,
 )
+from app.models.sql_generation import BusinessIntentRecord, SQLGenerationEvent, SQLGenerationRecord
 from app.models.schema_registry import (
     SchemaChangeEvent,
     SchemaColumn,
@@ -34,6 +35,7 @@ __all__ = [
     "ApplicationSetting",
     "AuthEvent",
     "AuthorizationState",
+    "BusinessIntentRecord",
     "BusinessTerm",
     "ConnectorAuditEvent",
     "ExternalAPIConnector",
@@ -49,6 +51,8 @@ __all__ = [
     "SchemaRelationship",
     "SchemaSource",
     "SchemaTable",
+    "SQLGenerationEvent",
+    "SQLGenerationRecord",
     "User",
     "UserPermission",
     "UserRole",

@@ -15,3 +15,4 @@ export const ConnectorDetailPage = lazy(() => import("@/pages/ConnectorDetailPag
 export const AIProviderPage = lazy(() => import("@/pages/AIProviderPage").then((m) => ({ default: m.AIProviderPage })));
 export const BusinessTermsPage = lazy(() => import("@/pages/BusinessTermsPage").then((m) => ({ default: m.BusinessTermsPage })));
 export const QuestionPreviewPage = lazy(() => import("@/pages/QuestionPreviewPage").then((m) => ({ default: m.QuestionPreviewPage })));
+export const SqlGenerationPage = lazy(() => import("@/pages/SqlGenerationPage").then((m) => ({ default: m.SqlGenerationPage })));

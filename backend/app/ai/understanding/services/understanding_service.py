@@ -19,7 +19,9 @@ Pipeline (each step is deterministic backend code except step 6):
 9. Authorize the intent's tables and columns with the permission engine.
 10. Return the normalised intent and record an audit row and log event.
 
-Nothing here generates or executes SQL or calls the company connector.
+Validated intents are stored (``business_intents``) so that SQL generation
+(Module 10) can load the real intent by id. Nothing here generates or executes
+SQL or calls the company connector.
 """
 
 import logging
@@ -71,7 +73,7 @@ from app.ai.understanding.schemas.intent import (
 )
 from app.ai.understanding.schemas.llm_output import LLMInterpretation
 from app.ai.understanding.services.clarification import ClarificationEngine, ClarificationResult
-from app.ai.understanding.services.permission_view import PermissionView
+from app.ai.understanding.services.permission_view import PermissionView, authorize_references
 from app.ai.understanding.services.schema_context import SchemaContext
 from app.ai.understanding.services.schema_relevance import (
     KeywordSchemaRelevanceSelector,
@@ -83,14 +85,14 @@ from app.ai.understanding.services.terminology_service import TermMatch, Termino
 from app.ai.understanding.services.timezone_service import BusinessTimezoneService
 from app.ai.understanding.validators.intent_validator import InterpretationValidator, Issue, ValidatedInterpretation
 from app.ai.understanding.validators.safety import question_problem
-from app.authorization.engine import AuthorizationEngine, AuthorizationRequest
-from app.authorization.policy import DATA_RESOURCE_TYPE
+from app.authorization.engine import AuthorizationEngine
 from app.core.config import Settings
 from app.core.exceptions import ConflictError, InvalidInputError
 from app.core.logging import get_request_id
 from app.core.timezones import BUSINESS_TIMEZONE_SETTING_KEY
 from app.database.transaction import transaction
 from app.models.business_term import BusinessTerm, QuestionUnderstandingEvent
+from app.models.sql_generation import BusinessIntentRecord
 from app.models.user import User
 from app.repositories.schema_registry_repository import SchemaSourceRepository
 
@@ -205,6 +207,8 @@ class QuestionUnderstandingService:
             await self._record(user, request, run, status="rejected", validation="not_run")
             self._log(run, "rejected", None, None)
             raise
+        if response.intent is not None:
+            await self._store_intent(user, response.intent, response.status)
         await self._record(
             user, request, run, status=response.status, validation=response.validation.status,
             intent_type=response.intent.intent_type.value if response.intent else None,
@@ -442,25 +446,7 @@ class QuestionUnderstandingService:
 
     async def _authorized(self, user: User, permissions: PermissionView, referenced: dict[str, set[str]], operation: str) -> bool:
         """Ask the permission engine for exactly these tables, columns and operation (any data action may allow it)."""
-        for action in permissions.actions():
-            tables: list[str] = []
-            columns: list[str] = []
-            for table, names in referenced.items():
-                policy_table = permissions.policy_table(table, action)
-                if policy_table is None:
-                    break
-                tables.append(policy_table)
-                columns.extend(permissions.policy_column(table, action, name) for name in sorted(names))
-            else:
-                decision = await self._engine.authorize(
-                    AuthorizationRequest(
-                        user_id=user.id, resource_type=DATA_RESOURCE_TYPE, action=action,
-                        tables=tuple(tables), columns=tuple(columns), operation=operation,
-                    )
-                )
-                if decision.allowed:
-                    return True
-        return False
+        return await authorize_references(self._engine, user.id, permissions, referenced, operation) is not None
 
     # --- building responses ---------------------------------------------------------------------------------
 
@@ -634,6 +620,23 @@ class QuestionUnderstandingService:
             prompt_chars=run.prompt_chars,
             llm_attempts=run.attempts,
         )
+
+    # --- stored intents (Module 10) -----------------------------------------------------------------------
+
+    async def _store_intent(self, user: User, intent: BusinessIntent, status: str) -> None:
+        """Keep the validated intent so SQL generation loads it by id instead of trusting a client copy."""
+        async with transaction(self._session):
+            self._session.add(
+                BusinessIntentRecord(
+                    id=intent.intent_id,
+                    user_id=user.id,
+                    schema_source_id=intent.schema_source_id,
+                    schema_version=intent.schema_version,
+                    status=status,
+                    policy_revision=intent.permission_context.policy_revision,
+                    intent=intent.model_dump(mode="json"),
+                )
+            )
 
     # --- audit and logs ----------------------------------------------------------------------------------
 

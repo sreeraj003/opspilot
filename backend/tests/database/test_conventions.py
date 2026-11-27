@@ -35,6 +35,9 @@ def test_all_application_models_share_one_metadata() -> None:
         "ai_usage_records",
         "business_terms",
         "question_understanding_events",
+        "business_intents",
+        "sql_generations",
+        "sql_generation_events",
     }
 
 

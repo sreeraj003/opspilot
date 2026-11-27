@@ -12,6 +12,7 @@ import {
   RolesPage,
   SchemaDetailPage,
   SchemasPage,
+  SqlGenerationPage,
   UserDetailPage,
   UsersPage,
 } from "@/app/lazyPages";
@@ -142,6 +143,12 @@ export const routes: RouteObject[] = [
                     element: <RequirePermission permission="ai.question.preview" />,
                     handle: crumb("Question preview"),
                     children: [{ index: true, element: <QuestionPreviewPage /> }],
+                  },
+                  {
+                    path: "sql-generation",
+                    element: <RequirePermission permission="ai.sql.generate" />,
+                    handle: crumb("SQL generation"),
+                    children: [{ index: true, element: <SqlGenerationPage /> }],
                   },
                 ],
               },

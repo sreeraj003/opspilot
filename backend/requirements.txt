@@ -14,3 +14,5 @@ httpx==0.28.1
 cryptography==50.0.2
 # IANA timezone data for zoneinfo (business timezone), independent of the OS image.
 tzdata==2026.6
+# SQL parsing and dialect-aware rendering for generated SQL (Module 10). Pure Python.
+sqlglot==30.35.0

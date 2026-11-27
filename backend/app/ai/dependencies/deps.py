@@ -14,6 +14,7 @@ from app.ai.config.provider_config import ProviderConfigService
 from app.ai.services.llm_service import LLMService
 from app.ai.services.provider_admin_service import ProviderAdminService
 from app.ai.services.usage_service import UsageService
+from app.ai.sql_generation.services.generation_service import SQLGenerationService
 from app.ai.understanding.services.terminology_service import TerminologyService
 from app.ai.understanding.services.timezone_service import BusinessTimezoneService
 from app.ai.understanding.services.understanding_service import QuestionUnderstandingService
@@ -85,3 +86,19 @@ def get_question_understanding_service(
 
 
 QuestionUnderstandingServiceDep = Annotated[QuestionUnderstandingService, Depends(get_question_understanding_service)]
+
+
+# --- SQL generation (Module 10) ----------------------------------------------------------------------------
+
+
+def get_sql_generation_service(
+    session: DbSessionDep,
+    settings: SettingsDep,
+    llm: LLMServiceDep,
+    terminology: TerminologyServiceDep,
+    engine: AuthorizationEngineDep,
+) -> SQLGenerationService:
+    return SQLGenerationService(session, settings=settings, llm=llm, terminology=terminology, engine=engine)
+
+
+SQLGenerationServiceDep = Annotated[SQLGenerationService, Depends(get_sql_generation_service)]
