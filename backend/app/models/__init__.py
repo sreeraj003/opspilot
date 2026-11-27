@@ -28,6 +28,7 @@ from app.models.schema_registry import (
     SchemaTable,
 )
 from app.models.user import User
+from app.models.sql_security import SQLExecutionApproval, SQLSecurityEvent, SQLSecurityValidation
 from app.models.user_session import RetiredRefreshToken, UserSession
 
 __all__ = [
@@ -51,8 +52,11 @@ __all__ = [
     "SchemaRelationship",
     "SchemaSource",
     "SchemaTable",
+    "SQLExecutionApproval",
     "SQLGenerationEvent",
     "SQLGenerationRecord",
+    "SQLSecurityEvent",
+    "SQLSecurityValidation",
     "User",
     "UserPermission",
     "UserRole",

@@ -2,12 +2,115 @@
 
 ## Current module
 
-**Module 10: natural language to SQL generation engine.** Implemented and verified on 2026-11-27.
-Awaiting the project owner's review. Module 11 (SQL security and execution guard) has not been started.
+**Module 11: SQL security and execution guard.** Implemented and verified on 2026-11-27.
+Awaiting the project owner's review. Module 12 has not been started.
 
-Built on `main` with Modules 01 to 09 merged (Module 09 via PR #10). Modules 01 to 09 keep their behaviour; the
-only Module 09 changes are additive (validated intents are now stored, and the reference-authorization helper moved
-into `permission_view.py`). Earlier records are kept below.
+Built on `main` with Modules 01 to 10 merged. Modules 01 to 10 keep their behaviour. The only changes to earlier
+modules are additive: Module 07's trusted request gains a second permitted issuer (`sql_security_guard`) with
+approval-binding fields, and `ConnectorService.execute` claims a guard approval once before sending. Earlier records
+are kept below.
+
+## Module 11: what was implemented
+
+References: [docs/SQL_SECURITY.md](docs/SQL_SECURITY.md), ARCHITECTURE.md section 12, README "SQL security guard".
+
+**Nothing executes from a client.** There is no public endpoint that accepts SQL and no execute endpoint. The guard
+approves the exact SQL; `SQLExecutionGuard` (internal, for Module 12) is the only way an approval becomes a trusted
+connector request.
+
+- **Package** `backend/app/ai/sql_security/`: `parsers/`, `validators/`, `policies/`, `rewriters/`, `approvals/`,
+  `services/`, `schemas/`; tests in `backend/tests/sql_security/`.
+- **17-step pipeline**: persisted generation, ownership, schema access, current schema version, integrity hash,
+  SQLGlot parse in the dialect, full AST allowlist inspection (every CTE, subquery and branch), single SELECT,
+  registry-resolved tables and columns, registered joins, function allowlist, fresh Module 04 authorization (no
+  cache), row-level restrictions, complexity, result limit, structured decision, then a short-lived approval bound
+  to the exact rewritten SQL after it is re-parsed and re-validated.
+- **`SQLSecurityValidationResult`** with `validation_id`, `generation_id`, `approved`, `status` (`approved`,
+  `rejected`, `clarification_required`, `validation_failed`, `approval_expired`), `validation_errors`, `warnings`,
+  `referenced_tables`, `referenced_columns`, `detected_functions`, `applied_row_restrictions`, `schema_version`,
+  `permission_version`, `query_hash`, `validated_at`. Safe user messages; internal reasons only for
+  `ai.sql.security.audit`; inaccessible names are never revealed.
+- **Statement rules**: rejects DML, DDL, DCL, TCL, EXEC/CALL, dynamic SQL, `SELECT INTO`, locking and hints,
+  table-valued functions, `VALUES`, `LATERAL`, system catalogs, comments, stacked statements, recursive CTEs, CTE
+  shadowing, `SELECT *`, CROSS/NATURAL/USING joins; window functions and set operations only when enabled.
+- **Row-level security** from the Module 04 DSL (conditions and and/or/not groups) compiled to SQLGlot expressions
+  and applied by wrapping every restricted table reference in a filtered derived table, so it holds in CTEs,
+  subqueries, joins and UNION branches; verified after re-parse; unenforceable filters reject the query.
+- **Approvals** (`sql_execution_approvals`): exact SQL and SHA-256 bound to user, connector, schema source and
+  version, permission version and fingerprint; 5-minute TTL; single use; DB trigger makes bound fields immutable and
+  restricts transitions. Re-validation supersedes the previous approval.
+- **Execution boundary**: the guard locks the approval, checks binding and expiry, re-runs the full pipeline (any
+  change invalidates it), consumes it and seals a `ValidatedQueryRequest` (issuer `sql_security_guard`, approval id,
+  generation id, SQL hash, expiry). `ConnectorService.execute` verifies the seal and hash and claims the approval for
+  that exact request before HTTPX; replays and concurrent attempts are refused.
+- **Audit**: `sql_security_events` (validation, approval created, superseded, revoked, expired, invalidated,
+  execution authorized, rejected, claimed) with ids, hashes and codes, never SQL text.
+- **Frontend**: a **Security validation** panel in the SQL generation result: Validate SQL, server-reported status
+  (Awaiting validation, Approved, Rejected, Validation failed, Approval expired, Revoked, Approval invalidated),
+  summary, errors, warnings, row restrictions, approved SQL (with SQL view), expiry, schema version, validation time,
+  query fingerprint and Revoke approval. No Execute control.
+
+### Tables
+
+`sql_security_validations`, `sql_execution_approvals`, `sql_security_events`.
+
+### Migrations
+
+`0009_create_sql_security_tables` (`2026_11_27_0009_create_sql_security_tables.py`): creates the three tables with
+checks, foreign keys and indexes; adds the append-only trigger on validations and the immutability/transition trigger
+on approvals; inserts `ai.sql.validate` and `ai.sql.security.audit`, grants both to Administrator and bumps the
+authorization revision. `downgrade()` removes all of this.
+
+### API endpoints (under `/api/v1`)
+
+`POST /ai/sql/generations/{id}/validate`; `GET /ai/sql/generations/{id}/validation`; `GET /ai/sql/validations/{id}`;
+`GET /ai/sql/approvals/{id}`; `POST /ai/sql/approvals/{id}/revoke`. All authenticated, rate limited and audited. No
+execution endpoint.
+
+### New configuration and dependencies
+
+New settings, in `.env.example` and `docker-compose.yml`: `AI_SQL_VALIDATION_RATE_LIMIT_PER_USER` (30/min),
+`AI_SQL_APPROVAL_TTL_SECONDS` (300), `AI_SQL_GUARD_MAX_SQL_LENGTH` (20000), `AI_SQL_GUARD_MAX_JOINS` (6),
+`AI_SQL_GUARD_MAX_TABLES` (8), `AI_SQL_GUARD_MAX_NESTING_DEPTH` (3), `AI_SQL_GUARD_MAX_CTES` (5),
+`AI_SQL_GUARD_MAX_SUBQUERIES` (6), `AI_SQL_GUARD_MAX_EXPRESSIONS` (600), `AI_SQL_GUARD_MAX_RESULT_ROWS` (1000),
+`AI_SQL_GUARD_MAX_EXECUTION_SECONDS` (30), `AI_SQL_GUARD_ALLOW_WINDOW_FUNCTIONS` (false),
+`AI_SQL_GUARD_ALLOW_SET_OPERATIONS` (false), `AI_SQL_GUARD_ALLOW_CROSS_SCHEMA` (false),
+`AI_SQL_GUARD_ALLOWED_NAMESPACES`, `AI_SQL_GUARD_EXTRA_FUNCTIONS`, `AI_SQL_GUARD_APPROVED_JOINS` (empty). No new
+dependencies (SQLGlot 30.35.0 from Module 10).
+
+### Commands executed and results (Module 11)
+
+| Command | Result |
+| --- | --- |
+| `pytest -q` with `TEST_DATABASE_URL` (PostgreSQL 16) | **1025 passed, 1 skipped** (884 before; 141 added; the skip is the opt-in live AI test) |
+| `pytest -q tests/sql_security` | **141 passed** (103 pure unit tests, 38 PostgreSQL API and boundary tests) |
+| `alembic upgrade head`, `alembic check`, `alembic downgrade -1`, `alembic upgrade head` | OK (`0008 → 0009`, no drift, back to `0008`, up again; also covered by `tests/database/test_migrations.py`) |
+| `npx vitest run` | **243 passed** in 35 files (233 before; 10 added) |
+| `npx tsc -b` | OK, no errors |
+| `npm run lint` | OK, 0 errors, 0 warnings |
+| `npm run build` | OK |
+
+Earlier tests updated (not weakened): migration head and structure checks for 0009, table conventions for the new
+tables, the Module 07 issuer test (the guard issuer is now permitted but must carry its binding), and the Module 10
+"no execution endpoint" test (the allowed path list includes the five Module 11 paths, still none executes).
+
+**Backend tests added**: see docs/SQL_SECURITY.md section 11 (statements, schema, permissions, RLS, functions,
+complexity, approvals, connector boundary). Only `httpx.MockTransport` is used; no real database or company API.
+
+**Frontend tests added**: awaiting state, approval only from the server's answer (no SQL sent), rejection with safe
+errors, validation failure, warnings, expired approval, revoke, hidden SQL, auditor reasons, server errors, and no
+validate action without `ai.sql.validate`; no Execute control in any state.
+
+### Known limitations (Module 11)
+
+- No execution workflow yet: Module 12 will call `SQLExecutionGuard.execute`. The UI cannot run approvals.
+- Structural complexity limits only; the company API must enforce its own statement timeout and resource limits
+  (read-only account, row and size limits).
+- Row filters only on the restricted table's own columns; cross-table policies reject the query. Derived-table
+  wrapping may change query plans on some databases.
+- Joins only through registered relationships or `AI_SQL_GUARD_APPROVED_JOINS`; non-equality joins are rejected.
+- The function allowlist is deliberately small; extend it per dialect after review.
+- Expired approvals are marked when read or used; there is no background sweep. Rate limits are per process.
 
 ## Module 10: what was implemented
 

@@ -465,12 +465,19 @@ async def test_raw_sql_and_forged_requests_are_refused() -> None:
 
 async def test_only_permitted_issuers_and_fixed_sql() -> None:
     authority = ExecutionApprovalAuthority()
-    other = authority._issue(  # what a future issuer would produce; not permitted in this module
-        issuer="sql_security_guard", connector_id=CONNECTOR, exact_sql="SELECT 1", requesting_user_id=USER,
+    other = authority._issue(  # an issuer that is not permitted
+        issuer="reporting_module", connector_id=CONNECTOR, exact_sql="SELECT 1", requesting_user_id=USER,
         schema_source_id=SOURCE, schema_version=3, validation_reference="guard:1", permission_context_reference="perm:1",
     )
     with pytest.raises(TrustedRequestRejectedError, match="cannot be executed yet"):
         authority.verify(other)
+    # The SQL security guard (Module 11) is permitted, but only with a bound approval.
+    unbound = authority._issue(
+        issuer="sql_security_guard", connector_id=CONNECTOR, exact_sql="SELECT 1", requesting_user_id=USER,
+        schema_source_id=SOURCE, schema_version=3, validation_reference="guard:1", permission_context_reference="perm:1",
+    )
+    with pytest.raises(TrustedRequestRejectedError, match="not bound to a security approval"):
+        authority.verify(unbound)
     arbitrary = authority._issue(
         issuer="connector_test", connector_id=CONNECTOR, exact_sql="SELECT * FROM users", requesting_user_id=USER,
         schema_source_id=SOURCE, schema_version=3, validation_reference="x", permission_context_reference="y",

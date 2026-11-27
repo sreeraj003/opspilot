@@ -378,5 +378,11 @@ def test_there_is_no_execution_endpoint(g: SQLGeneration) -> None:
         "/api/v1/ai/sql/generate",
         "/api/v1/ai/sql/generations/{generation_id}",
         "/api/v1/ai/sql/generations/{generation_id}/regenerate",
+        # Module 11: validation and approval management; none of them executes or accepts SQL.
+        "/api/v1/ai/sql/generations/{generation_id}/validate",
+        "/api/v1/ai/sql/generations/{generation_id}/validation",
+        "/api/v1/ai/sql/validations/{validation_id}",
+        "/api/v1/ai/sql/approvals/{approval_id}",
+        "/api/v1/ai/sql/approvals/{approval_id}/revoke",
     }
-    assert not any("execute" in p for p in sql_paths)
+    assert not any("execute" in p or "run" in p for p in sql_paths)

@@ -98,6 +98,8 @@ export const ADMIN_PERMISSIONS: Permission[] = [
   "business_term.read",
   "business_term.manage",
   "ai.sql.generate",
+  "ai.sql.validate",
+  "ai.sql.security.audit",
 ];
 
 export function makeCurrentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {

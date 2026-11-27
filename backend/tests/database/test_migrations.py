@@ -43,6 +43,7 @@ CONNECTOR_TABLES = {"external_api_connectors", "connector_audit_events"}
 AI_TABLES = {"ai_usage_records"}
 UNDERSTANDING_TABLES = {"business_terms", "question_understanding_events"}
 SQL_GENERATION_TABLES = {"business_intents", "sql_generations", "sql_generation_events"}
+SQL_SECURITY_TABLES = {"sql_security_validations", "sql_execution_approvals", "sql_security_events"}
 
 
 def test_alembic_ini_contains_no_database_url() -> None:
@@ -52,17 +53,18 @@ def test_alembic_ini_contains_no_database_url() -> None:
 def test_single_linear_history_starting_with_application_settings() -> None:
     script = ScriptDirectory.from_config(alembic_config("postgresql://unused@localhost/unused_test"))
 
-    assert script.get_heads() == ["0008"]
+    assert script.get_heads() == ["0009"]
     revisions = list(script.walk_revisions())
-    assert [r.revision for r in revisions] == ["0008", "0007", "0006", "0005", "0004", "0003", "0002", "0001"]
-    assert revisions[0].down_revision == "0007"
-    assert revisions[1].down_revision == "0006"
-    assert revisions[2].down_revision == "0005"
-    assert revisions[3].down_revision == "0004"
-    assert revisions[4].down_revision == "0003"
-    assert revisions[5].down_revision == "0002"
-    assert revisions[6].down_revision == "0001"
-    assert revisions[7].down_revision is None
+    assert [r.revision for r in revisions] == ["0009", "0008", "0007", "0006", "0005", "0004", "0003", "0002", "0001"]
+    assert revisions[0].down_revision == "0008"
+    assert revisions[1].down_revision == "0007"
+    assert revisions[2].down_revision == "0006"
+    assert revisions[3].down_revision == "0005"
+    assert revisions[4].down_revision == "0004"
+    assert revisions[5].down_revision == "0003"
+    assert revisions[6].down_revision == "0002"
+    assert revisions[7].down_revision == "0001"
+    assert revisions[8].down_revision is None
 
 
 def test_migration_files_follow_the_naming_scheme() -> None:
@@ -77,6 +79,7 @@ def test_migration_files_follow_the_naming_scheme() -> None:
         "2026_11_26_0006_create_ai_usage_records.py",
         "2026_11_26_0007_create_business_terms_and_question_understanding.py",
         "2026_11_27_0008_create_sql_generation_tables.py",
+        "2026_11_27_0009_create_sql_security_tables.py",
     ]
 
 
@@ -118,9 +121,9 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         command.upgrade(config, "head")
         assert _tables(engine) == {
             "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES,
-            *CONNECTOR_TABLES, *AI_TABLES, *UNDERSTANDING_TABLES, *SQL_GENERATION_TABLES,
+            *CONNECTOR_TABLES, *AI_TABLES, *UNDERSTANDING_TABLES, *SQL_GENERATION_TABLES, *SQL_SECURITY_TABLES,
         }
-        assert _current_revision(engine) == "0008"
+        assert _current_revision(engine) == "0009"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
         _assert_rbac_structure_and_seed(engine)
@@ -129,6 +132,21 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         _assert_ai_structure(engine)
         _assert_understanding_structure(engine)
         _assert_sql_generation_structure(engine)
+        _assert_sql_security_structure(engine)
+
+        command.downgrade(config, "0008")
+        assert _tables(engine) == {
+            "alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES, *SCHEMA_REGISTRY_TABLES,
+            *CONNECTOR_TABLES, *AI_TABLES, *UNDERSTANDING_TABLES, *SQL_GENERATION_TABLES,
+        }
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT count(*) FROM permissions WHERE key IN ('ai.sql.validate', 'ai.sql.security.audit')")
+            ).scalar_one() == 0
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 8
+            assert connection.execute(
+                text("SELECT count(*) FROM pg_proc WHERE proname LIKE 'sql_%approvals_guard' OR proname LIKE 'sql_security%'")
+            ).scalar_one() == 0
 
         command.downgrade(config, "0007")
         assert _tables(engine) == {
@@ -137,7 +155,7 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         }
         with engine.connect() as connection:
             assert connection.execute(text("SELECT count(*) FROM permissions WHERE key = 'ai.sql.generate'")).scalar_one() == 0
-            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 7
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 9
 
         command.downgrade(config, "0006")
         assert _tables(engine) == {
@@ -148,7 +166,7 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
             assert connection.execute(
                 text("SELECT count(*) FROM permissions WHERE key LIKE 'business_term.%' OR key LIKE 'ai.question.%'")
             ).scalar_one() == 0
-            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 8
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 10
 
         command.downgrade(config, "0005")
         assert _tables(engine) == {
@@ -156,7 +174,7 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         }
         with engine.connect() as connection:
             assert connection.execute(text("SELECT count(*) FROM permissions WHERE key LIKE 'ai.%'")).scalar_one() == 0
-            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 9
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 11
 
         command.downgrade(config, "0004")
         assert _tables(engine) == {
@@ -164,7 +182,7 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         }
         with engine.connect() as connection:
             assert connection.execute(text("SELECT count(*) FROM permissions WHERE key LIKE 'connector.%'")).scalar_one() == 0
-            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 10
+            assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 12
 
         command.downgrade(config, "0003")
         assert _tables(engine) == {"alembic_version", "application_settings", *AUTH_TABLES, *RBAC_TABLES}
@@ -182,7 +200,7 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         assert _current_revision(engine) is None
 
         command.upgrade(config, "head")
-        assert _current_revision(engine) == "0008"
+        assert _current_revision(engine) == "0009"
         _assert_application_settings_structure(engine)
         _assert_auth_structure(engine)
         _assert_rbac_structure_and_seed(engine)
@@ -191,6 +209,7 @@ def test_upgrade_downgrade_and_upgrade_again(empty_database: str) -> None:
         _assert_ai_structure(engine)
         _assert_understanding_structure(engine)
         _assert_sql_generation_structure(engine)
+        _assert_sql_security_structure(engine)
     finally:
         engine.dispose()
 
@@ -291,8 +310,8 @@ def _assert_rbac_structure_and_seed(engine: Engine) -> None:
         ).scalar_one()
         assert admin_permissions == len(SYSTEM_PERMISSIONS)
         # 1 from 0003, incremented by 0004 (schema), 0005 (connector), 0006 (AI), 0007 (understanding)
-        # and 0008 (SQL generation).
-        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 6
+        # 0008 (SQL generation) and 0009 (SQL security).
+        assert connection.execute(text("SELECT revision FROM authorization_state")).scalar_one() == 7
         # Only built-in rows: no business roles or permissions are hard-coded.
         assert connection.execute(text("SELECT count(*) FROM roles WHERE NOT is_system")).scalar_one() == 0
         assert connection.execute(text("SELECT count(*) FROM permissions WHERE NOT is_system")).scalar_one() == 0
@@ -356,7 +375,7 @@ def _assert_ai_structure(engine: Engine) -> None:
         assert connection.execute(text("SELECT count(*) FROM ai_usage_records")).scalar_one() == 0
         keys = set(connection.execute(text("SELECT key FROM permissions WHERE key LIKE 'ai.%'")).scalars())
         assert keys == {"ai.provider.read", "ai.provider.test", "ai.usage.read", "ai.question.understand", "ai.question.preview",
-                        "ai.sql.generate"}
+                        "ai.sql.generate", "ai.sql.validate", "ai.sql.security.audit"}
 
 
 def _assert_understanding_structure(engine: Engine) -> None:
@@ -393,6 +412,29 @@ def _assert_sql_generation_structure(engine: Engine) -> None:
     # The audit trail is kept apart from SQL content.
     assert not events & {"sql", "generated_sql", "prompt", "question", "messages", "credential"}
     with engine.connect() as connection:
-        assert set(connection.execute(text("SELECT key FROM permissions WHERE key LIKE 'ai.sql.%'")).scalars()) == {
+        assert set(connection.execute(text("SELECT key FROM permissions WHERE key LIKE 'ai.sql.%'")).scalars()) >= {
             "ai.sql.generate"
+        }
+
+
+def _assert_sql_security_structure(engine: Engine) -> None:
+    inspector = inspect(engine)
+    approvals = {c["name"] for c in inspector.get_columns("sql_execution_approvals")}
+    assert {"validation_id", "generation_id", "user_id", "connector_id", "schema_source_id", "schema_version",
+            "permission_version", "permission_fingerprint", "exact_sql_hash", "dialect", "approved_at", "expires_at",
+            "consumed_at", "status", "execution_reference"} <= approvals
+    validations = {c["name"] for c in inspector.get_columns("sql_security_validations")}
+    assert {"generation_id", "approved", "status", "user_errors", "internal_reasons", "warnings", "referenced_tables",
+            "referenced_columns", "detected_functions", "applied_row_restrictions", "schema_version",
+            "permission_version", "query_hash", "validated_at"} <= validations
+    assert not validations & {"sql", "exact_sql", "generated_sql"}
+    events = {c["name"] for c in inspector.get_columns("sql_security_events")}
+    assert not events & {"sql", "exact_sql", "generated_sql", "credential", "headers"}
+    checks = {c["name"] for c in inspector.get_check_constraints("sql_security_validations")}
+    assert "ck_sql_security_validations_approved_matches_status" in checks
+    with engine.connect() as connection:
+        triggers = set(connection.execute(text("SELECT tgname FROM pg_trigger WHERE NOT tgisinternal")).scalars())
+        assert {"trg_sql_security_validations_append_only", "trg_sql_execution_approvals_guard"} <= triggers
+        assert set(connection.execute(text("SELECT key FROM permissions WHERE key LIKE 'ai.sql.%'")).scalars()) == {
+            "ai.sql.generate", "ai.sql.validate", "ai.sql.security.audit"
         }

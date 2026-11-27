@@ -8,9 +8,10 @@ language based on the real results.
 Each company installs and runs its **own independent copy** of OpsPilot AI. It is not a multi-tenant SaaS
 product, and it never connects directly to the company's business database.
 
-> **Status:** Modules 01 to 08 are implemented: foundation, application database, authentication, roles and
-> permissions, the frontend design system, the schema registry, the company GET API connector, and the AI provider
-> layer. SQL generation, the SQL security guard and the chat interface arrive in later modules. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+> **Status:** Modules 01 to 11 are implemented: foundation, application database, authentication, roles and
+> permissions, the frontend design system, the schema registry, the company GET API connector, the AI provider
+> layer, question understanding, SQL generation and the SQL security guard. Running approved queries and the chat
+> interface arrive in later modules. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Architecture overview
 
@@ -415,7 +416,7 @@ Contract, intent types, time rules, clarification rules, model output contract a
 
 OpsPilot turns an interpreted question into **candidate SQL** for the schema's database (PostgreSQL, MySQL or SQL
 Server). Generated SQL is **untrusted**: it is never executed by this step, never sent to the company API and must
-pass the SQL security guard (a later module) first.
+pass the SQL security guard (below) first.
 
 Under **Administration → SQL generation**, pick a schema and ask a question. OpsPilot interprets it, generates SQL
 from the stored interpretation using only the registered tables and columns you may see, validates it with SQLGlot
@@ -429,6 +430,26 @@ text is shown only when your data permission allows viewing SQL (`allow_sql_view
 | `POST /ai/sql/generations/{id}/regenerate` | `ai.sql.generate` | Generate again (bounded) |
 
 Contract, dialects, validation rules, limitations and configuration: [docs/SQL_GENERATION.md](docs/SQL_GENERATION.md).
+
+## SQL security guard
+
+Every generated query is checked again by a deterministic guard (no AI) before it can ever reach the company API.
+In the SQL generation result, **Validate SQL** (permission `ai.sql.validate`) re-parses the stored query with SQLGlot,
+allows exactly one read-only SELECT, checks every table, column, join and function against the registry and an
+allowlist, re-checks your current permissions, applies your row restrictions to every part of the query, enforces
+complexity and row limits, and either rejects it with a safe reason or approves the **exact** rewritten SQL. An
+approval is single use, bound to you, the connector, the schema version and your permissions, and expires after
+five minutes. Nothing executes yet: there is no execute button or endpoint.
+
+| Endpoint (under `/api/v1`) | Permission | Purpose |
+| --- | --- | --- |
+| `POST /ai/sql/generations/{id}/validate` | `ai.sql.validate` | Validate one of your generations |
+| `GET /ai/sql/generations/{id}/validation` | `ai.sql.validate` | Its latest validation |
+| `GET /ai/sql/validations/{id}` | `ai.sql.validate` or `ai.sql.security.audit` | One validation (auditors also see internal reasons) |
+| `GET /ai/sql/approvals/{id}` | `ai.sql.validate` | Approval status and expiry |
+| `POST /ai/sql/approvals/{id}/revoke` | `ai.sql.validate` | Revoke an unused approval |
+
+Rules, row-level security, limits, approval lifecycle and limitations: [docs/SQL_SECURITY.md](docs/SQL_SECURITY.md).
 
 ## Application database
 

@@ -626,7 +626,7 @@ OpsPilot does not connect to the company's business database and stores no datab
 exposes an HTTPS GET endpoint that takes SQL as a query parameter and returns JSON. A connector stores how to
 call it, and the backend calls it with HTTPX. No public endpoint accepts SQL: the connection test takes no body
 and sends a fixed statement, and execution is reachable only in-process through a sealed `ValidatedQueryRequest`
-(8.6). SQL generation is section 11; the SQL security guard (section 13) is a later module.
+(8.6). SQL generation is section 11; the SQL security guard is section 12.
 
 ### 8.2 Data model
 
@@ -1002,7 +1002,69 @@ generate from the stored intent id. Shows the question summary, status "Generate
 highlighted SQL with Copy (only when visible), dialect, tables, columns, joins, assumptions, permission notes,
 validation issues, Regenerate (bounded) and generation details (re-read with `GET`). No Execute button.
 
-## 12. Planned modular backend architecture
+## 12. SQL security and execution guard (Module 11)
+
+The full guide (pipeline, AST rules, function allowlist, limits, approval lifecycle, audit, API, limitations) is
+[docs/SQL_SECURITY.md](docs/SQL_SECURITY.md). This section covers the design.
+
+### 12.1 Boundary
+
+Module 11 is the only component that can approve SQL and the only issuer (`sql_security_guard`) of a
+`ValidatedQueryRequest` for generated SQL. It is deterministic (no LLM) and trusts nothing Module 10 stored except
+as input: it re-parses the stored SQL with SQLGlot, re-resolves every reference against Module 06's registry and
+re-authorizes it with Module 04's `AuthorizationEngine` (uncached). There is no public endpoint that accepts SQL and
+no execution endpoint; `SQLExecutionGuard` is an internal service that Module 12 will call.
+
+### 12.2 Layers
+
+```
+app/ai/sql_security/
+  parsers/sql_parser.py        parse_exact: one statement, no comments, dialect tokens, length, control characters
+  validators/statement.py      AST allowlist, forbidden nodes, function policy, hints, locks, system schemas
+  validators/references.py     CTE and table classification, qualify against the registry, scopes, joins, correlation
+  validators/complexity.py     structural limits
+  policies/                    GuardLimits / GuardOptions (from settings), function allowlist and denylist
+  rewriters/policy_dsl.py      Module 04 row-filter DSL -> SQLGlot expression (typed literals only)
+  rewriters/row_security.py    wrap every restricted table reference; verify after re-parse
+  rewriters/result_limit.py    enforce or add the row limit
+  services/inspector.py        the pure pipeline (no database): parse -> inspect -> authorize -> rewrite -> re-validate -> hash
+  services/validation_service.py  persisted generation, ownership, schema, connector, permissions; persists results
+  services/execution_service.py   SQLExecutionGuard: lock, bind check, re-validate, consume, seal
+  approvals/ledger.py          conditional UPDATEs: consume (approved -> consumed), claim (consumed -> executed)
+```
+
+### 12.3 Row-level security
+
+Restrictions are applied by replacing every reference to a restricted physical table (in any scope) with a derived
+table `(SELECT <referenced columns> FROM schema.table AS a WHERE <restriction>) AS a`. Because the filter sits at the
+table itself, it holds in CTEs, subqueries, both sides of joins and every set-operation branch, and outer `OR`s or
+outer joins cannot widen it. The rendered SQL is re-parsed and every restricted reference is checked for its exact
+restriction before the hash is taken. Anything that cannot be enforced rejects the query.
+
+### 12.4 Approvals and the connector boundary
+
+An approval (`sql_execution_approvals`) binds the exact SQL and its SHA-256 to the user, connector, schema source and
+version, permission version and fingerprint, and expires after `AI_SQL_APPROVAL_TTL_SECONDS`. A trigger makes bound
+fields immutable and allows only `approved -> consumed | revoked | expired | invalidated` and `consumed -> executed`.
+At execution the guard locks the row, re-validates against current state (any difference invalidates the approval),
+consumes it and seals the request with the approval id, generation id, SQL hash and expiry. `ConnectorService.execute`
+verifies the seal and hash, then claims the approval for that exact request before the HTTP request, so one approval
+sends at most one query. Requests from any other issuer (except the fixed connector test) are refused.
+
+### 12.5 Persistence and audit
+
+`sql_security_validations` (append-only; user messages, internal reasons, references, versions, hashes),
+`sql_execution_approvals` (the only place the approved SQL is stored) and `sql_security_events` (ids, hashes,
+versions, status and codes; never SQL text). Internal reasons are returned only with `ai.sql.security.audit`.
+
+### 12.6 Frontend
+
+The SQL generation preview has a **Security validation** panel: Validate SQL (with `ai.sql.validate`), server status
+(Awaiting validation, Approved, Rejected, Validation failed, Approval expired, Revoked, Approval invalidated), summary,
+errors, warnings, row restrictions, the approved SQL (with SQL view), expiry, schema version, timestamp and Revoke
+approval. Approval state is re-read from the server; there is no Execute control.
+
+## 13. Planned modular backend architecture
 
 The backend is a modular monolith. Each business module adds its own routes, schemas, services and models in
 the existing layers:
@@ -1030,13 +1092,13 @@ Planned modules (subject to the project owner's sequencing):
 | LLM integration | **Implemented (Module 08, section 9)** |
 | Question understanding | **Implemented (Module 09, section 10)** |
 | SQL generation | **Implemented (Module 10, section 11)** |
-| SQL security guard | Independent validation and authorization of generated SQL |
+| SQL security guard | **Implemented (Module 11, section 12)** |
 | Conversations and answers | Chat history, natural-language answers, charts (Recharts) |
 
 Rules for every module: route handlers stay thin, logic lives in services, persistence lives in repositories,
 dependencies are injected through `app/api/deps.py`, and no module imports another module's routes.
 
-## 13. Planned SQL security execution pipeline
+## 14. SQL security execution pipeline
 
 Generated SQL is untrusted input. Before anything reaches the company API it passes a pipeline that is
 independent of the LLM and cannot be skipped:
@@ -1050,15 +1112,17 @@ Question
 3. Generate SQL                            (LLM, preliminary SQLGlot checks, untrusted: Module 10)
   │
   ▼
-4. SQL security guard                      (deterministic, no LLM)
+4. SQL security guard                      (deterministic, no LLM: Module 11)
    a. Parse SQL into a syntax tree; reject anything that does not parse
-   b. Allow a single read-only SELECT statement only (no DML/DDL, no multiple statements, no comments tricks)
-   c. Every referenced table and column must be registered and permitted for this user
-   d. Block dangerous functions and system catalogs; enforce a row limit
-   e. Record the decision and the final SQL in the audit log
+   b. Allow a single read-only SELECT statement only (no DML/DDL, no multiple statements, no comments)
+   c. Every referenced table and column must be registered and permitted for this user (fresh permissions)
+   d. Function allowlist, registered joins, complexity limits, row limit
+   e. Apply row-level restrictions to every access path, re-parse and re-validate the result
+   f. Store the decision; bind the exact SQL to a short-lived, single-use approval
   │  rejected → explain to the user, nothing is executed
   ▼
-5. Execute through the company GET API     (HTTPX, timeouts, size limits)
+5. Execute through the company GET API     (guard re-validates and consumes the approval; Module 07 claims it
+                                            once, then HTTPX with timeouts and size limits: Module 12 wires this)
 6. Receive results
 7. Generate the natural-language answer    (LLM, grounded only in the returned rows)
 ```

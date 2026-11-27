@@ -215,6 +215,35 @@ class Settings(BaseSettings):
     # How long a stored business intent may be used for SQL generation (relative dates age).
     ai_sql_intent_max_age_minutes: int = Field(default=60, ge=1, le=10080)
 
+    # --- SQL security and execution guard (Module 11) ---------------------------------------
+    # Validation requests each user may make per minute.
+    ai_sql_validation_rate_limit_per_user: int = Field(default=30, ge=1, le=1000)
+    # Lifetime of an execution approval. Approvals are single-use and bound to the exact SQL.
+    ai_sql_approval_ttl_seconds: int = Field(default=300, ge=10, le=3600)
+    # Complexity limits, enforced on the parsed SQL (never on the text).
+    ai_sql_guard_max_sql_length: int = Field(default=20000, ge=100, le=100000)
+    ai_sql_guard_max_joins: int = Field(default=6, ge=0, le=50)
+    ai_sql_guard_max_tables: int = Field(default=8, ge=1, le=50)
+    ai_sql_guard_max_nesting_depth: int = Field(default=3, ge=0, le=20)
+    ai_sql_guard_max_ctes: int = Field(default=5, ge=0, le=50)
+    ai_sql_guard_max_subqueries: int = Field(default=6, ge=0, le=100)
+    ai_sql_guard_max_expressions: int = Field(default=600, ge=10, le=20000)
+    # Most rows an approved query may return. A missing limit is added; a larger one is rejected.
+    ai_sql_guard_max_result_rows: int = Field(default=1000, ge=1, le=100000)
+    # Longest execution the external API contract supports; connectors with a longer timeout get a warning.
+    ai_sql_guard_max_execution_seconds: int = Field(default=30, ge=1, le=600)
+    # Window functions (ROW_NUMBER, RANK, ...) and UNION / INTERSECT / EXCEPT must be enabled explicitly.
+    ai_sql_guard_allow_window_functions: bool = False
+    ai_sql_guard_allow_set_operations: bool = False
+    # Queries over tables from more than one schema namespace (for example sales and hr).
+    ai_sql_guard_allow_cross_schema: bool = False
+    # Schema namespaces queries may use (empty: every registered namespace).
+    ai_sql_guard_allowed_namespaces: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Extra approved functions as dialect:function (for example postgres:length or *:upper).
+    ai_sql_guard_extra_functions: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Extra approved join rules beyond registered relationships: schema.table.column=schema.table.column.
+    ai_sql_guard_approved_joins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
     @field_validator(
         "database_url",
         "secret_key",
@@ -269,7 +298,14 @@ class Settings(BaseSettings):
                 raise ValueError(f"CORS origin must start with http:// or https://: {origin}")
         return value
 
-    @field_validator("connector_allowed_hosts", "connector_allowed_private_networks", mode="before")
+    @field_validator(
+        "connector_allowed_hosts",
+        "connector_allowed_private_networks",
+        "ai_sql_guard_allowed_namespaces",
+        "ai_sql_guard_extra_functions",
+        "ai_sql_guard_approved_joins",
+        mode="before",
+    )
     @classmethod
     def _parse_comma_list(cls, value: object) -> object:
         if isinstance(value, str):

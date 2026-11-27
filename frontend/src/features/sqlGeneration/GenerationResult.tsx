@@ -10,6 +10,7 @@ import { SkeletonText } from "@/components/ui/Skeleton";
 import { StatusIndicator, type StatusTone } from "@/components/ui/StatusIndicator";
 import { useSqlGeneration } from "@/features/sqlGeneration/hooks";
 import { SqlCode } from "@/features/sqlGeneration/SqlCode";
+import { SecurityValidationPanel } from "@/features/sqlSecurity/SecurityValidationPanel";
 import type { FailureCategory, GenerationStatus, SqlGeneration } from "@/types/sqlGeneration";
 import { errorMessage } from "@/utils/errors";
 import { humanize } from "@/utils/format";
@@ -141,7 +142,7 @@ export function GenerationResult({
   return (
     <Card
       title="SQL generation result"
-      description="Generated SQL is untrusted. It has not been approved or executed; the SQL security guard validates it separately."
+      description="Generated SQL is untrusted until the SQL security guard approves it. Nothing on this page executes a query."
       actions={
         <>
           <Button size="sm" variant="ghost" onClick={() => setDetails(true)}>
@@ -209,6 +210,8 @@ export function GenerationResult({
             {result.explanation && <p className="text-sm text-fg-secondary">{result.explanation}</p>}
           </div>
         )}
+
+        {result.status === "generated" && <SecurityValidationPanel key={result.generation_id} generationId={result.generation_id} />}
 
         <div className="grid gap-5 md:grid-cols-2">
           <Section title="Referenced tables" empty={result.referenced_tables.length === 0}>
