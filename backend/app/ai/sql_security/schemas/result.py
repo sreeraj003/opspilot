@@ -101,7 +101,7 @@ class ValidationView(SQLSecurityValidationResult):
     approved_sql: str | None = None
     sql_visible: bool = False
     approval: ApprovalView | None = None
-    # Execution is wired in a later module; the API reports whether it is available at all.
+    # True while the approval can still be executed once (Module 12: POST /ai/sql/approvals/{id}/execute).
     execution_available: bool = False
     internal_reasons: list[InternalReason] | None = None
 

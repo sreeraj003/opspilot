@@ -28,13 +28,30 @@ class ErrorCategory(StrEnum):
 
 
 class ConnectorExecutionError(Exception):
-    """A connector request failed or was refused. ``message`` is safe to show and to store."""
+    """A connector request failed or was refused. ``message`` is safe to show and to store.
 
-    def __init__(self, category: ErrorCategory, message: str, *, http_status: int | None = None) -> None:
+    ``outcome_uncertain`` is true when the request may already have reached the
+    company API but no complete answer came back (a read timeout, a connection
+    lost after sending, a body cut off). The company API may have executed the
+    query, so the caller must not retry it automatically (Module 12).
+    ``reason`` optionally narrows the category (for example ``invalid_json``).
+    """
+
+    def __init__(
+        self,
+        category: ErrorCategory,
+        message: str,
+        *,
+        http_status: int | None = None,
+        outcome_uncertain: bool = False,
+        reason: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.category = category
         self.message = message
         self.http_status = http_status
+        self.outcome_uncertain = outcome_uncertain
+        self.reason = reason
 
 
 class TrustedRequestRejectedError(ConnectorExecutionError):

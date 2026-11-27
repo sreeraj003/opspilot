@@ -328,12 +328,14 @@ class SQLSecurityValidationService:
                 if access.row_filter is not None:
                     filters[table.lower()] = access.row_filter
             visible = await authorize_references(self._engine, user.id, permissions, referenced, operation, sql_view=True)
+            exportable = await authorize_references(self._engine, user.id, permissions, referenced, operation, export=True)
             return AccessDecision(
                 allowed=True,
                 revision=decision.policy_revision,
                 fingerprint=permission_fingerprint(user.id, decision, operation),
                 row_filters=filters,
                 sql_visible=visible is not None,
+                export_allowed=exportable is not None,
             )
 
         return authorize
@@ -589,7 +591,7 @@ class SQLSecurityValidationService:
             approved_sql=approval.exact_sql if sql_visible and approval is not None else None,
             sql_visible=sql_visible,
             approval=self._approval_view(approval) if approval is not None else None,
-            execution_available=False,
+            execution_available=approval is not None and self._approval_view(approval).is_usable,
             internal_reasons=[InternalReason(**r) for r in record.internal_reasons] if auditor else None,
         )
 

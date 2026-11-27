@@ -384,5 +384,12 @@ def test_there_is_no_execution_endpoint(g: SQLGeneration) -> None:
         "/api/v1/ai/sql/validations/{validation_id}",
         "/api/v1/ai/sql/approvals/{approval_id}",
         "/api/v1/ai/sql/approvals/{approval_id}/revoke",
+        # Module 12: the only execution path takes an approval id (no body, no SQL) and runs only guard-approved SQL.
+        "/api/v1/ai/sql/approvals/{approval_id}/execute",
+        "/api/v1/ai/sql/executions",
+        "/api/v1/ai/sql/executions/{execution_id}",
+        "/api/v1/ai/sql/executions/{execution_id}/metadata",
+        "/api/v1/ai/sql/executions/{execution_id}/export",
     }
-    assert not any("execute" in p or "run" in p for p in sql_paths)
+    executing = [p for p in sql_paths if "execute" in p or "run" in p]
+    assert executing == ["/api/v1/ai/sql/approvals/{approval_id}/execute"]

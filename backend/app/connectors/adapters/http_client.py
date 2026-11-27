@@ -21,6 +21,13 @@ For each request it:
 
 Errors are mapped to ``ErrorCategory`` values with safe messages. Neither the
 SQL, the headers, the credentials nor the resolved address is logged.
+
+Every error also says whether the request may already have reached the
+company API (``outcome_uncertain``): failures before the request is written
+(destination checks, DNS, the URL limit, connecting, TLS) are certain; a read
+timeout, a connection lost after sending, or a body cut off are not, because
+the company backend may have run the query. Callers must never retry those
+automatically.
 """
 
 import asyncio
@@ -48,6 +55,34 @@ class Timeouts:
     connect: float
     read: float
     total: float
+
+
+@dataclass(slots=True)
+class _Dispatch:
+    """How far one request got: ``stage`` is ``preparing``, ``sending`` or ``reading``.
+
+    ``traced``/``sent`` come from the HTTP transport's trace events where it reports them
+    (the real network transport does; test transports may not). Without trace events the
+    request is assumed possibly sent once it was handed to the transport.
+    """
+
+    stage: str = "preparing"
+    traced: bool = False
+    sent: bool = False
+
+    @property
+    def maybe_sent(self) -> bool:
+        if self.stage == "preparing":
+            return False
+        return self.sent or not self.traced
+
+    async def trace(self, name: str, info: dict[str, object]) -> None:
+        self.traced = True
+        if "send_request_headers" in name or "send_request_body" in name:
+            self.sent = True
+
+
+_CONNECT_PHASE_TIMEOUTS = (httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,11 +177,16 @@ class ConnectorHttpClient:
         timeouts: Timeouts,
         max_bytes: int,
     ) -> RawResponse:
+        dispatch = _Dispatch()
         try:
             async with asyncio.timeout(timeouts.total):
-                return await self._get(url, params=params, headers=headers, timeouts=timeouts, max_bytes=max_bytes)
+                return await self._get(
+                    url, params=params, headers=headers, timeouts=timeouts, max_bytes=max_bytes, dispatch=dispatch
+                )
         except TimeoutError:
-            raise ConnectorExecutionError(ErrorCategory.TIMEOUT, "The company API did not respond in time.") from None
+            raise ConnectorExecutionError(
+                ErrorCategory.TIMEOUT, "The company API did not respond in time.", outcome_uncertain=dispatch.maybe_sent
+            ) from None
 
     async def _get(
         self,
@@ -156,6 +196,7 @@ class ConnectorHttpClient:
         headers: dict[str, str],
         timeouts: Timeouts,
         max_bytes: int,
+        dispatch: _Dispatch,
     ) -> RawResponse:
         try:
             destination = await self.policy.resolve(url)
@@ -195,12 +236,19 @@ class ConnectorHttpClient:
         if target.scheme == "https" and target.ip_literal is None:
             # TLS server name and certificate verification use the configured host name, not the IP.
             extensions["sni_hostname"] = target.host
+        extensions["trace"] = dispatch.trace
         request = httpx.Request("GET", pinned, headers=request_headers, extensions=extensions)
 
+        dispatch.stage = "sending"
         try:
             response = await self._client.send(request, stream=True, follow_redirects=False)
-        except httpx.TimeoutException:
+        except _CONNECT_PHASE_TIMEOUTS:
             raise ConnectorExecutionError(ErrorCategory.TIMEOUT, "The company API did not respond in time.") from None
+        except httpx.TimeoutException:
+            # Read or write timeout: the request may have been received and executed.
+            raise ConnectorExecutionError(
+                ErrorCategory.TIMEOUT, "The company API did not respond in time.", outcome_uncertain=dispatch.maybe_sent
+            ) from None
         except httpx.ConnectError as exc:
             if _has_tls_cause(exc):
                 raise ConnectorExecutionError(
@@ -210,8 +258,12 @@ class ConnectorHttpClient:
         except httpx.HTTPError as exc:
             if _has_tls_cause(exc):
                 raise ConnectorExecutionError(ErrorCategory.TLS_FAILED, "The TLS connection to the company API failed.") from None
-            raise ConnectorExecutionError(ErrorCategory.CONNECTION_FAILED, "The connection to the company API failed.") from None
+            raise ConnectorExecutionError(
+                ErrorCategory.CONNECTION_FAILED, "The connection to the company API failed.", outcome_uncertain=dispatch.maybe_sent
+            ) from None
 
+        dispatch.stage = "reading"
+        dispatch.sent = True
         try:
             return await self._read(response, max_bytes)
         finally:
@@ -251,9 +303,15 @@ class ConnectorHttpClient:
                     raise _too_large(max_bytes, status)
                 chunks.append(chunk)
         except httpx.TimeoutException:
-            raise ConnectorExecutionError(ErrorCategory.TIMEOUT, "The company API did not finish its response in time.") from None
+            raise ConnectorExecutionError(
+                ErrorCategory.TIMEOUT, "The company API did not finish its response in time.", http_status=status,
+                outcome_uncertain=True,
+            ) from None
         except httpx.HTTPError:
-            raise ConnectorExecutionError(ErrorCategory.CONNECTION_FAILED, "The connection broke while reading the response.") from None
+            raise ConnectorExecutionError(
+                ErrorCategory.CONNECTION_FAILED, "The connection broke while reading the response.", http_status=status,
+                outcome_uncertain=True,
+            ) from None
         return RawResponse(status_code=status, content_type=content_type, body=b"".join(chunks))
 
 

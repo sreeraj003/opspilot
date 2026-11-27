@@ -33,7 +33,7 @@ def test_validate_approves_good_sql_and_returns_the_structured_result(guard: Gua
     assert body["referenced_tables"] == ["sales.customers", "sales.orders"]
     assert "sum" in [f.lower() for f in body["detected_functions"]]
     assert body["schema_version"] == guard.schema_version()
-    assert body["execution_available"] is False
+    assert body["execution_available"] is True  # usable approval (Module 12 can execute it once)
     approval = body["approval"]
     assert approval["status"] == "approved" and approval["is_usable"] is True
     assert 0 < approval["expires_in_seconds"] <= 300

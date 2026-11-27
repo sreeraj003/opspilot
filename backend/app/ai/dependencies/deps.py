@@ -11,6 +11,7 @@ import httpx
 from fastapi import Depends, Request
 
 from app.ai.config.provider_config import ProviderConfigService
+from app.ai.query_execution.services.execution_service import QueryExecutionService
 from app.ai.services.llm_service import LLMService
 from app.ai.services.provider_admin_service import ProviderAdminService
 from app.ai.services.usage_service import UsageService
@@ -20,7 +21,7 @@ from app.ai.understanding.services.terminology_service import TerminologyService
 from app.ai.understanding.services.timezone_service import BusinessTimezoneService
 from app.ai.understanding.services.understanding_service import QuestionUnderstandingService
 from app.authorization.engine import AuthorizationEngine
-from app.api.deps import AuthorizationEngineDep, DbSessionDep, SchemaRegistryServiceDep, SettingsDep
+from app.api.deps import AuthorizationEngineDep, ConnectorServiceDep, DbSessionDep, SchemaRegistryServiceDep, SettingsDep
 
 
 def get_provider_config_service(settings: SettingsDep) -> ProviderConfigService:
@@ -123,3 +124,23 @@ def get_sql_security_service(
 
 
 SQLSecurityServiceDep = Annotated[SQLSecurityValidationService, Depends(get_sql_security_service)]
+
+
+# --- Query execution (Module 12) ------------------------------------------------------------------------
+
+
+def get_query_execution_service(
+    request: Request,
+    session: DbSessionDep,
+    settings: SettingsDep,
+    security: SQLSecurityServiceDep,
+    connectors: ConnectorServiceDep,
+) -> QueryExecutionService:
+    """Module 11's guard (uncached permissions) and Module 07's connector service, on the request's session."""
+    return QueryExecutionService(
+        session, settings=settings, validation=security, authority=request.app.state.execution_authority,
+        connectors=connectors,
+    )
+
+
+QueryExecutionServiceDep = Annotated[QueryExecutionService, Depends(get_query_execution_service)]

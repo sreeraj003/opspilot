@@ -127,6 +127,7 @@ async def authorize_references(
     operation: str,
     *,
     sql_view: bool = False,
+    export: bool = False,
 ) -> AuthorizationDecision | None:
     """Ask the permission engine for exactly these tables, columns and operation.
 
@@ -150,6 +151,7 @@ async def authorize_references(
                 AuthorizationRequest(
                     user_id=user_id, resource_type=DATA_RESOURCE_TYPE, action=action,
                     tables=tuple(tables), columns=tuple(columns), operation=operation, sql_view=sql_view,
+                    export=export,
                 )
             )
             if decision.allowed:

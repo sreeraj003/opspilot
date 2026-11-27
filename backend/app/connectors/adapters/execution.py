@@ -17,13 +17,19 @@ connector side:
 It then sends ``GET <endpoint>?<sql_parameter_name>=<SQL>`` (plus any configured
 non-sensitive parameters) with the connector's headers, and validates and
 normalises the response with the connector's ``ResponseContract``.
+
+Guard-approved requests (Module 11/12) also carry ``X-OpsPilot-Execution-Id``
+(the request's execution reference, no secret) so the company backend can log
+it, correlate an uncertain outcome and, if it supports it, refuse duplicates.
 """
 
 from app.connectors.adapters.http_client import ConnectorHttpClient, RawResponse
 from app.connectors.adapters.response import NormalizedResult, check_health_document, normalize, parse_json
 from app.connectors.errors import ConnectorExecutionError, ErrorCategory, TrustedRequestRejectedError
 from app.connectors.runtime import ConnectorRuntimeConfig
-from app.connectors.trusted import CONNECTOR_TEST_ISSUER, ExecutionApprovalAuthority, ValidatedQueryRequest
+from app.connectors.trusted import CONNECTOR_TEST_ISSUER, SQL_GUARD_ISSUER, ExecutionApprovalAuthority, ValidatedQueryRequest
+
+EXECUTION_ID_HEADER = "X-OpsPilot-Execution-Id"
 
 
 class ConnectorExecutionAdapter:
@@ -52,17 +58,23 @@ class ConnectorExecutionAdapter:
             )
         return trusted
 
-    async def execute(self, request: ValidatedQueryRequest, config: ConnectorRuntimeConfig) -> NormalizedResult:
+    async def execute(
+        self, request: ValidatedQueryRequest, config: ConnectorRuntimeConfig, *, precise_numbers: bool = False
+    ) -> NormalizedResult:
+        """Send the request. ``precise_numbers`` parses non-integer numbers as exact ``Decimal`` values."""
         trusted = self.check_request(request, config)
         params = [*config.extra_query_params, (config.sql_parameter_name, trusted.exact_sql)]
+        headers = config.headers
+        if trusted.issuer == SQL_GUARD_ISSUER:
+            headers = {**headers, EXECUTION_ID_HEADER: str(trusted.execution_reference)}
         raw = await self._http.get(
             config.url,
             params=params,
-            headers=config.headers,
+            headers=headers,
             timeouts=config.timeouts,
             max_bytes=config.max_response_size_bytes,
         )
-        return self._normalize(raw, config)
+        return self._normalize(raw, config, precise=precise_numbers)
 
     async def check_health(self, config: ConnectorRuntimeConfig) -> RawResponse:
         """GET the connector's own health endpoint (no SQL is sent)."""
@@ -79,6 +91,6 @@ class ConnectorExecutionAdapter:
         return raw
 
     @staticmethod
-    def _normalize(raw: RawResponse, config: ConnectorRuntimeConfig) -> NormalizedResult:
-        document = parse_json(raw.body)
+    def _normalize(raw: RawResponse, config: ConnectorRuntimeConfig, *, precise: bool = False) -> NormalizedResult:
+        document = parse_json(raw.body, precise=precise)
         return normalize(document, config.contract, http_status=raw.status_code, size=raw.size)

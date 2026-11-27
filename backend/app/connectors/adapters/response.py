@@ -21,7 +21,8 @@ values are not converted, and an empty array is a successful, empty result
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
@@ -77,6 +78,8 @@ class NormalizedResult:
     execution_time_ms: float | None
     response_size_bytes: int
     http_status: int
+    # The envelope's metadata object as received (envelope format only), e.g. column type information.
+    metadata: dict[str, Any] | None = field(default=None)
 
     @property
     def is_empty(self) -> bool:
@@ -87,11 +90,17 @@ def _reject_constant(value: str) -> Any:
     raise ValueError("non-standard JSON constant")
 
 
-def parse_json(body: bytes) -> Any:
+def parse_json(body: bytes, *, precise: bool = False) -> Any:
+    """Parse the body as strict JSON. ``precise`` keeps non-integer numbers as exact ``Decimal`` values.
+
+    Integers are always Python ``int`` (arbitrary precision). NaN and Infinity are refused.
+    """
     try:
-        return json.loads(body.decode("utf-8"), parse_constant=_reject_constant)
+        return json.loads(body.decode("utf-8"), parse_constant=_reject_constant, parse_float=Decimal if precise else None)
     except (UnicodeDecodeError, ValueError, RecursionError):
-        raise ConnectorExecutionError(ErrorCategory.MALFORMED_RESPONSE, "The company API returned invalid JSON.") from None
+        raise ConnectorExecutionError(
+            ErrorCategory.MALFORMED_RESPONSE, "The company API returned invalid JSON.", reason="invalid_json"
+        ) from None
 
 
 def _malformed(message: str) -> ConnectorExecutionError:
@@ -119,6 +128,7 @@ def _rows(value: Any) -> tuple[list[str], list[dict[str, Any]]]:
 
 def normalize(document: Any, contract: ResponseContract, *, http_status: int, size: int) -> NormalizedResult:
     execution_time: float | None = None
+    metadata: dict[str, Any] | None = None
     if contract.format == "raw_array":
         columns, rows = _rows(document)
     else:
@@ -143,7 +153,7 @@ def normalize(document: Any, contract: ResponseContract, *, http_status: int, si
             if not isinstance(metadata, dict):
                 raise _malformed(f"The company API's '{contract.metadata_field}' field is not a JSON object.")
             elapsed = metadata.get("execution_time_ms")
-            if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and elapsed >= 0:
+            if isinstance(elapsed, (int, float, Decimal)) and not isinstance(elapsed, bool) and elapsed >= 0:
                 execution_time = float(elapsed)
     return NormalizedResult(
         columns=columns,
@@ -152,6 +162,7 @@ def normalize(document: Any, contract: ResponseContract, *, http_status: int, si
         execution_time_ms=execution_time,
         response_size_bytes=size,
         http_status=http_status,
+        metadata=metadata,
     )
 
 

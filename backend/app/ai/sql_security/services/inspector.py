@@ -60,6 +60,8 @@ class AccessDecision:
     # lower-case registry qualified table -> row-policy DSL
     row_filters: dict[str, dict[str, Any]] = field(default_factory=dict)
     sql_visible: bool = False
+    # Whether the same references may also be exported (Module 12 result export); not part of the fingerprint.
+    export_allowed: bool = False
     internal_reason: str | None = None
 
 

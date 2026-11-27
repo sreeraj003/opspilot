@@ -244,6 +244,28 @@ class Settings(BaseSettings):
     # Extra approved join rules beyond registered relationships: schema.table.column=schema.table.column.
     ai_sql_guard_approved_joins: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
+    # --- Query execution and results (Module 12). See docs/QUERY_EXECUTION.md. ------------------
+    # Execution requests each user may make per minute.
+    ai_sql_exec_rate_limit_per_user: int = Field(default=20, ge=1, le=1000)
+    # Executions one user may have in flight at once (pending or running).
+    ai_sql_exec_max_concurrent_per_user: int = Field(default=2, ge=1, le=20)
+    # Hard ceiling for one execution (connector timeouts above it are cut to it).
+    ai_sql_exec_max_duration_seconds: int = Field(default=30, ge=1, le=600)
+    # Largest company API response body read (streamed; the connector's own limit applies when lower).
+    ai_sql_exec_max_response_bytes: int = Field(default=5_242_880, ge=1024, le=104_857_600)
+    # Rows kept from one result: extra rows are dropped and the result is marked truncated.
+    ai_sql_exec_max_rows: int = Field(default=1000, ge=1, le=100000)
+    # Columns one result may have; more is rejected (columns are never dropped silently).
+    ai_sql_exec_max_columns: int = Field(default=100, ge=1, le=1000)
+    # Longest single string value; longer values reject the result (values are never cut).
+    ai_sql_exec_max_cell_length: int = Field(default=10000, ge=16, le=1_000_000)
+    # Deepest nesting of JSON values inside a cell (objects and arrays).
+    ai_sql_exec_max_nesting_depth: int = Field(default=5, ge=0, le=32)
+    # Largest normalised result kept (JSON bytes); rows beyond it are dropped and marked truncated.
+    ai_sql_exec_max_result_bytes: int = Field(default=2_097_152, ge=1024, le=52_428_800)
+    # How long normalised result rows are kept for the requesting user; metadata and audit stay.
+    ai_sql_exec_result_retention_minutes: int = Field(default=60, ge=1, le=10080)
+
     @field_validator(
         "database_url",
         "secret_key",

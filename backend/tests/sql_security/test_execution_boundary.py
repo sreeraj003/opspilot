@@ -160,7 +160,9 @@ def test_raw_sql_cannot_be_sent_to_the_connector(guard: Guard) -> None:
 def test_no_public_endpoint_accepts_sql_for_execution(guard: Guard) -> None:
     paths = guard.ok(guard.client.get("/openapi.json"))["paths"]
     sql_paths = [p for p in paths if "/ai/sql" in p]
-    assert sql_paths and not any("execute" in p or "/run" in p for p in sql_paths)
+    # Module 12 adds exactly one execution endpoint, addressed by approval id, with no request body.
+    assert sql_paths and [p for p in sql_paths if "execute" in p or "/run" in p] == ["/api/v1/ai/sql/approvals/{approval_id}/execute"]
+    assert "requestBody" not in paths["/api/v1/ai/sql/approvals/{approval_id}/execute"]["post"]
     for path, methods in paths.items():
         for operation in methods.values():
             body = str(operation.get("requestBody", ""))

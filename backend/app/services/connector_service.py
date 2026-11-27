@@ -19,6 +19,7 @@ service enforces what holds whatever the caller may do:
 * Network calls never run inside a database transaction.
 """
 
+import dataclasses
 import logging
 import time
 import uuid
@@ -564,8 +565,19 @@ class ConnectorService:
             steps=_steps(category, uses_tls=uses_tls),
         )
 
-    async def execute(self, request: ValidatedQueryRequest) -> NormalizedResult:
-        """Run one trusted, sealed request. The internal boundary later modules call; no route exposes it."""
+    async def execute(
+        self,
+        request: ValidatedQueryRequest,
+        *,
+        max_response_bytes: int | None = None,
+        max_total_seconds: float | None = None,
+        precise_numbers: bool = False,
+    ) -> NormalizedResult:
+        """Run one trusted, sealed request. The internal boundary later modules call; no route exposes it.
+
+        Callers may only tighten the connector's limits: ``max_response_bytes`` and
+        ``max_total_seconds`` apply when they are lower than the connector's own.
+        """
         if not isinstance(request, ValidatedQueryRequest):
             raise TrustedRequestRejectedError("Only validated query requests can be executed; raw SQL is refused.")
         started = time.monotonic()
@@ -576,7 +588,7 @@ class ConnectorService:
         try:
             connector, source = await self.get(request.connector_id)
             known_connector = True
-            config = self._runtime_config(connector, source)
+            config = _tightened(self._runtime_config(connector, source), max_response_bytes, max_total_seconds)
             adapter = self._require_adapter()
             # Verify the seal, issuer, SQL hash, connector, schema and limits before claiming anything.
             adapter.check_request(request, config)
@@ -589,7 +601,7 @@ class ConnectorService:
             elif request.issuer != CONNECTOR_TEST_ISSUER:
                 raise TrustedRequestRejectedError("Queries from this source cannot be executed.")
             await self._session.commit()
-            result = await adapter.execute(request, config)
+            result = await adapter.execute(request, config, precise_numbers=precise_numbers)
         except ConnectorExecutionError as exc:
             error = exc
         except ConnectorNotFoundError:
@@ -610,7 +622,7 @@ class ConnectorService:
                 schema_version=schema_version,
                 sql_fingerprint=request.sql_fingerprint,
                 sql_length=len(request.exact_sql),
-                details={"issuer": request.issuer},
+                details={"issuer": request.issuer, **({"outcome_uncertain": True} if error and error.outcome_uncertain else {})},
             )
         if error is not None:
             raise error
@@ -868,6 +880,16 @@ class ConnectorService:
                 "execution_reference": fields.get("execution_reference"),
             },
         )
+
+
+def _tightened(config: ConnectorRuntimeConfig, max_bytes: int | None, max_seconds: float | None) -> ConnectorRuntimeConfig:
+    changes: dict[str, Any] = {}
+    if max_bytes is not None and max_bytes < config.max_response_size_bytes:
+        changes["max_response_size_bytes"] = max_bytes
+    if max_seconds is not None and max_seconds < config.timeouts.total:
+        t = config.timeouts
+        changes["timeouts"] = Timeouts(connect=min(t.connect, max_seconds), read=min(t.read, max_seconds), total=max_seconds)
+    return dataclasses.replace(config, **changes) if changes else config
 
 
 def _source_available(source: SchemaSource | None) -> bool:

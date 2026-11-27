@@ -14,6 +14,7 @@ from app.api.routes import (
     connectors,
     health,
     permissions,
+    query_execution,
     roles,
     schema_registry,
     settings,
@@ -44,6 +45,7 @@ api_v1_router.include_router(understanding.router)
 api_v1_router.include_router(business_terms.router)
 api_v1_router.include_router(sql_generation.router)
 api_v1_router.include_router(sql_security.router)
+api_v1_router.include_router(query_execution.router)
 
 api_router = APIRouter()
 api_router.include_router(system.router)

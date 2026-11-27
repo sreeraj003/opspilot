@@ -73,6 +73,10 @@ class Permission(StrEnum):
     AI_SQL_GENERATE = "ai.sql.generate"
     AI_SQL_VALIDATE = "ai.sql.validate"
     AI_SQL_SECURITY_AUDIT = "ai.sql.security.audit"
+    # Module 12: execution of guard-approved SQL and its results.
+    AI_SQL_EXECUTE = "ai.sql.execute"
+    AI_SQL_EXECUTION_READ_ALL = "ai.sql.execution.read_all"
+    AI_SQL_RESULT_EXPORT = "ai.sql.result.export"
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +238,30 @@ SYSTEM_PERMISSIONS: tuple[SystemPermissionDefinition, ...] = (
         "Review SQL security decisions",
         "View detailed internal reasons of SQL security validations for security investigation.",
         False,
+    ),
+    # Executing is delegable: only an own, guard-approved, single-use approval can run, and the
+    # guard re-checks the user's current data permissions immediately before anything is sent.
+    SystemPermissionDefinition(
+        Permission.AI_SQL_EXECUTE,
+        "Run approved SQL",
+        "Execute own guard-approved queries once through the company API connector and view own execution "
+        "results (data permissions are checked again before results are shown).",
+        True,
+    ),
+    # Seeing who ran what across the organisation is an oversight capability: administrators only.
+    # It shows execution metadata, never other users' result rows or SQL.
+    SystemPermissionDefinition(
+        Permission.AI_SQL_EXECUTION_READ_ALL,
+        "View all SQL executions",
+        "View the execution history and metadata of every user (never their result rows or SQL text).",
+        False,
+    ),
+    # Export is separate from viewing: it also needs allow_export on the data permission.
+    SystemPermissionDefinition(
+        Permission.AI_SQL_RESULT_EXPORT,
+        "Export query results",
+        "Download own query results as CSV when the data permissions also allow export.",
+        True,
     ),
 )
 
