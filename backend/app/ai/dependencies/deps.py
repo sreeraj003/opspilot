@@ -15,9 +15,11 @@ from app.ai.services.llm_service import LLMService
 from app.ai.services.provider_admin_service import ProviderAdminService
 from app.ai.services.usage_service import UsageService
 from app.ai.sql_generation.services.generation_service import SQLGenerationService
+from app.ai.sql_security.services.validation_service import SQLSecurityValidationService
 from app.ai.understanding.services.terminology_service import TerminologyService
 from app.ai.understanding.services.timezone_service import BusinessTimezoneService
 from app.ai.understanding.services.understanding_service import QuestionUnderstandingService
+from app.authorization.engine import AuthorizationEngine
 from app.api.deps import AuthorizationEngineDep, DbSessionDep, SchemaRegistryServiceDep, SettingsDep
 
 
@@ -102,3 +104,22 @@ def get_sql_generation_service(
 
 
 SQLGenerationServiceDep = Annotated[SQLGenerationService, Depends(get_sql_generation_service)]
+
+
+# --- SQL security and execution guard (Module 11) ----------------------------------------------------------
+
+
+def get_sql_security_service(
+    request: Request,
+    session: DbSessionDep,
+    settings: SettingsDep,
+    terminology: TerminologyServiceDep,
+) -> SQLSecurityValidationService:
+    # The guard never uses the authorization cache: every decision is resolved from the database.
+    engine = AuthorizationEngine(session, None)
+    # Tests may install ``app.state.sql_security_clock`` to move time forward (approval expiry).
+    clock = getattr(request.app.state, "sql_security_clock", None)
+    return SQLSecurityValidationService(session, settings=settings, terminology=terminology, engine=engine, clock=clock)
+
+
+SQLSecurityServiceDep = Annotated[SQLSecurityValidationService, Depends(get_sql_security_service)]

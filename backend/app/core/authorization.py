@@ -71,6 +71,8 @@ class Permission(StrEnum):
     BUSINESS_TERM_MANAGE = "business_term.manage"
     # Module 10: SQL generation (untrusted candidate SQL; never executed by this module).
     AI_SQL_GENERATE = "ai.sql.generate"
+    AI_SQL_VALIDATE = "ai.sql.validate"
+    AI_SQL_SECURITY_AUDIT = "ai.sql.security.audit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +218,22 @@ SYSTEM_PERMISSIONS: tuple[SystemPermissionDefinition, ...] = (
         "Generate candidate SQL from interpreted questions and view own generations (uses provider tokens; "
         "nothing is executed, and data permissions still apply).",
         True,
+    ),
+    # SQL security validation is delegable: it never widens access. The guard re-authorizes every
+    # query with the user's current data permissions, and an approval is single-use and short-lived.
+    SystemPermissionDefinition(
+        Permission.AI_SQL_VALIDATE,
+        "Validate SQL",
+        "Run the SQL security guard on own generated SQL and manage own short-lived execution approvals "
+        "(data permissions and row-level restrictions still apply).",
+        True,
+    ),
+    # Detailed internal rejection reasons can name tables a user may not see: administrators only.
+    SystemPermissionDefinition(
+        Permission.AI_SQL_SECURITY_AUDIT,
+        "Review SQL security decisions",
+        "View detailed internal reasons of SQL security validations for security investigation.",
+        False,
     ),
 )
 

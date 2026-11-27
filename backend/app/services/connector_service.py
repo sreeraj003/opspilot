@@ -30,6 +30,7 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.sql_security.approvals.ledger import claim_execution
 from app.connectors.adapters.execution import ConnectorExecutionAdapter
 from app.connectors.adapters.http_client import Timeouts
 from app.connectors.adapters.response import NormalizedResult, ResponseContract
@@ -42,7 +43,13 @@ from app.connectors.security.credentials import (
     require_cipher,
 )
 from app.connectors.security.destinations import DestinationError, DestinationPolicy
-from app.connectors.trusted import CONNECTOR_TEST_SQL, ExecutionApprovalAuthority, ValidatedQueryRequest
+from app.connectors.trusted import (
+    CONNECTOR_TEST_ISSUER,
+    CONNECTOR_TEST_SQL,
+    SQL_GUARD_ISSUER,
+    ExecutionApprovalAuthority,
+    ValidatedQueryRequest,
+)
 from app.connectors.validators.config import join_url, validate_query_param
 from app.core.config import Settings
 from app.core.exceptions import AppError, ConflictError, InvalidInputError, NotFoundError
@@ -570,8 +577,19 @@ class ConnectorService:
             connector, source = await self.get(request.connector_id)
             known_connector = True
             config = self._runtime_config(connector, source)
+            adapter = self._require_adapter()
+            # Verify the seal, issuer, SQL hash, connector, schema and limits before claiming anything.
+            adapter.check_request(request, config)
+            if request.issuer == SQL_GUARD_ISSUER:
+                # Module 11: the approval must be claimed exactly once, by exactly this request.
+                async with transaction(self._session):
+                    claimed = await claim_execution(self._session, request, now=utcnow())
+                if not claimed:
+                    raise TrustedRequestRejectedError("The security approval was already used or does not match this request.")
+            elif request.issuer != CONNECTOR_TEST_ISSUER:
+                raise TrustedRequestRejectedError("Queries from this source cannot be executed.")
             await self._session.commit()
-            result = await self._require_adapter().execute(request, config)
+            result = await adapter.execute(request, config)
         except ConnectorExecutionError as exc:
             error = exc
         except ConnectorNotFoundError:

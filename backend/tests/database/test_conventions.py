@@ -38,6 +38,9 @@ def test_all_application_models_share_one_metadata() -> None:
         "business_intents",
         "sql_generations",
         "sql_generation_events",
+        "sql_security_validations",
+        "sql_execution_approvals",
+        "sql_security_events",
     }
 
 
