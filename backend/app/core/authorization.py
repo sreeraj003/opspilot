@@ -69,6 +69,8 @@ class Permission(StrEnum):
     AI_QUESTION_PREVIEW = "ai.question.preview"
     BUSINESS_TERM_READ = "business_term.read"
     BUSINESS_TERM_MANAGE = "business_term.manage"
+    # Module 10: SQL generation (untrusted candidate SQL; never executed by this module).
+    AI_SQL_GENERATE = "ai.sql.generate"
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +206,15 @@ SYSTEM_PERMISSIONS: tuple[SystemPermissionDefinition, ...] = (
         Permission.BUSINESS_TERM_MANAGE,
         "Manage business terms",
         "Create, edit, activate, deactivate and delete business terminology definitions.",
+        True,
+    ),
+    # SQL generation is delegable. It produces untrusted candidate SQL only: it never executes
+    # anything, and seeing the SQL text still needs a data permission with allow_sql_view.
+    SystemPermissionDefinition(
+        Permission.AI_SQL_GENERATE,
+        "Generate SQL",
+        "Generate candidate SQL from interpreted questions and view own generations (uses provider tokens; "
+        "nothing is executed, and data permissions still apply).",
         True,
     ),
 )

@@ -46,7 +46,8 @@ export type SystemPermission =
   | "ai.question.understand"
   | "ai.question.preview"
   | "business_term.read"
-  | "business_term.manage";
+  | "business_term.manage"
+  | "ai.sql.generate";
 
 export type Permission = SystemPermission | (string & {});
 

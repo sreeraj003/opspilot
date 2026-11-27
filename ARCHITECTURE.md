@@ -626,7 +626,7 @@ OpsPilot does not connect to the company's business database and stores no datab
 exposes an HTTPS GET endpoint that takes SQL as a query parameter and returns JSON. A connector stores how to
 call it, and the backend calls it with HTTPX. No public endpoint accepts SQL: the connection test takes no body
 and sends a fixed statement, and execution is reachable only in-process through a sealed `ValidatedQueryRequest`
-(8.6). SQL generation and the SQL security guard (section 12) are later modules.
+(8.6). SQL generation is section 11; the SQL security guard (section 13) is a later module.
 
 ### 8.2 Data model
 
@@ -912,7 +912,97 @@ see the status, intent, metrics, dimensions, filters, time, sorting, assumptions
 "mark as answered"), validation issues, permission status and diagnostics; the business timezone is shown and, with
 `settings:manage`, editable. Each preview is one model request and runs only on submit.
 
-## 11. Planned modular backend architecture
+## 11. SQL generation (Module 10)
+
+The full guide (API, response contract, dialects, validation rules, limitations, configuration) is
+[docs/SQL_GENERATION.md](docs/SQL_GENERATION.md). This section covers the design.
+
+### 11.1 Boundary
+
+Module 10 turns one validated `BusinessIntent` into one **untrusted** candidate query. It reuses Module 08's
+`LLMService`, Module 09's `SchemaContext`, `PermissionView`, `TerminologyService`, strict JSON extraction and
+executable-content detection, Module 06's registry and Module 04's `AuthorizationEngine` (the reference
+authorization helper `authorize_references` moved into `permission_view.py` and is shared by both modules). It never
+executes SQL, never calls the company connector, has no execution endpoint and never approves a query: every result
+is `awaiting_security_validation`, and Module 11 must parse and authorize it independently. No RAG, embeddings or
+agents.
+
+Intents are not trusted from clients. Module 09 now stores each validated intent (`business_intents`, keyed by
+`intent_id`, owned by the asking user); `POST /ai/sql/generate` takes only `intent_id` and `schema_source_id` and loads
+that record. An intent must be `understood`, younger than `AI_SQL_INTENT_MAX_AGE_MINUTES`, for the same schema and
+schema version, and every table and column it names must still be registered.
+
+### 11.2 Layers
+
+```
+app/api/routes/sql_generation.py       POST /ai/sql/generate, GET /ai/sql/generations/{id}, POST .../regenerate
+app/ai/sql_generation/
+  schemas/result.py                    SQLGenerationResult, LLMSQLOutput (strict), statuses, failure categories
+  schemas/api.py                       request and view models (question summary, regenerations left)
+  dialects/registry.py                 SQLDialect: PostgreSQL, MySQL, SQL Server; conventions and forbidden syntax
+  context/builder.py                   SQLGenerationContext: intent, tables + join paths, visible columns, terms,
+                                       permission context; SQLGlot mapping of visible columns
+  prompts/sql_prompt.py                PROMPT_VERSION, system prompt, payload message, regeneration feedback
+  normalizers/sql_output.py            strict reply extraction, same-dialect rendering, SHA-256 fingerprint
+  validators/sql_validator.py          PreliminarySQLValidator (SQLGlot tokenizer, parser, qualifier, scopes)
+  services/generation_service.py       SQLGenerationService: pipeline, bounded regeneration, persistence, audit
+app/models/sql_generation.py           BusinessIntentRecord, SQLGenerationRecord, SQLGenerationEvent
+```
+
+### 11.3 Pipeline
+
+Load the stored intent → check it (schema, clarification, type, permission status, something to select) → load the
+schema, reject unsupported dialects → load terms and the user's *current* permissions → build the context (refuse
+with `permission_denied`, before any model call, if the intent needs anything now restricted) → authorize the
+intent's fields with the engine → prompt (temperature 0, JSON only) → parse strictly → validate with SQLGlot and
+check the model's declared references → bounded regeneration with backend-written feedback (never for unsafe SQL)
+→ authorize the parsed tables and columns with the engine (`aggregate` or `read`) and decide SQL visibility
+(`sql_view`) → persist the artifact and an audit event → respond. The context is built once; regeneration never
+widens it.
+
+### 11.4 Context
+
+Intent tables are the intent's candidate tables, the tables of every referenced field and the related tables of the
+terms it uses. Bridge tables come from a breadth-first search over registered relationships whose columns are
+visible, through permitted tables only, at most three tables between two intent tables and at most
+`AI_SQL_MAX_SCHEMA_TABLES` in total (`truncated` is reported). Only visible columns are listed; terms are included only
+when all their fields are visible. The permission section lists allowed columns, operations and the user's own row
+restrictions as guidance; it is never authoritative.
+
+### 11.5 Dialects
+
+A schema's `database_type` selects the dialect (`postgresql` → `postgres`, `mysql`/`mariadb` → `mysql`, `sqlserver` →
+`tsql`); everything else is `SQL_DIALECT_UNSUPPORTED`. Each `SQLDialect` carries the conventions given to the model
+(quoting, literals, row limits, date literals, truncation and arithmetic) and the syntax preliminary validation
+rejects (`forbidden_tokens`, `forbidden_quote_chars`, `bracket_rule`). SQLGlot parses and renders in that dialect only.
+
+### 11.6 Preliminary validation
+
+Deterministic and SQLGlot based (tokenizer, parser, `qualify` with a mapping of visible columns, scope traversal);
+regular expressions are not used to understand SQL. Blocking issues (non-SELECT, several statements, procedures,
+dynamic SQL, dangerous functions, system catalogs, locking, SELECT INTO) discard the query. Correctable issues
+(syntax, dialect, tables, columns, `SELECT *`, joins, aggregation, grouping, row limits, intent coverage) are
+returned to the model. Restricted and unknown tables get the same message. The validator is not the security guard:
+row-level restrictions, function allowlists and complexity limits are Module 11's.
+
+### 11.7 Persistence, visibility and audit
+
+`sql_generations` stores the normalized SQL and its SHA-256 (Module 11's approval identity), parsed references,
+joins, assumptions, status, validation outcome, failure category, provider, model, prompt version, attempts and
+policy revision. Check constraints pin `trust_level = 'untrusted'` and `security_status = 'awaiting_security_validation'`.
+SQL text is returned only when the engine allows `sql_view` for the referenced tables (re-checked on every read);
+records are readable only by their owner. `sql_generation_events` keeps outcome metadata only, in its own
+transaction, and the log event `ai.sql_generation.completed` mirrors it. Module 08 records the model call under
+`sql_generation`. The new delegable permission is `ai.sql.generate` (migration `0008`).
+
+### 11.8 Frontend
+
+**SQL generation** (`/admin/sql-generation`, `ai.sql.generate`): interpret (Module 09 `POST /ai/understand`), then
+generate from the stored intent id. Shows the question summary, status "Generated — Awaiting Security Validation",
+highlighted SQL with Copy (only when visible), dialect, tables, columns, joins, assumptions, permission notes,
+validation issues, Regenerate (bounded) and generation details (re-read with `GET`). No Execute button.
+
+## 12. Planned modular backend architecture
 
 The backend is a modular monolith. Each business module adds its own routes, schemas, services and models in
 the existing layers:
@@ -939,14 +1029,14 @@ Planned modules (subject to the project owner's sequencing):
 | External API integration | **Implemented (Module 07, section 8)** |
 | LLM integration | **Implemented (Module 08, section 9)** |
 | Question understanding | **Implemented (Module 09, section 10)** |
-| SQL generation | Question + relevant schemas → candidate SQL |
+| SQL generation | **Implemented (Module 10, section 11)** |
 | SQL security guard | Independent validation and authorization of generated SQL |
 | Conversations and answers | Chat history, natural-language answers, charts (Recharts) |
 
 Rules for every module: route handlers stay thin, logic lives in services, persistence lives in repositories,
 dependencies are injected through `app/api/deps.py`, and no module imports another module's routes.
 
-## 12. Planned SQL security execution pipeline
+## 13. Planned SQL security execution pipeline
 
 Generated SQL is untrusted input. Before anything reaches the company API it passes a pipeline that is
 independent of the LLM and cannot be skipped:
@@ -957,7 +1047,7 @@ Question
   ▼
 1. Understand the question                (LLM, validated by the backend: Module 09)
 2. Retrieve relevant registered schemas    (schema registry, filtered by the user's permissions)
-3. Generate SQL                            (LLM)
+3. Generate SQL                            (LLM, preliminary SQLGlot checks, untrusted: Module 10)
   │
   ▼
 4. SQL security guard                      (deterministic, no LLM)

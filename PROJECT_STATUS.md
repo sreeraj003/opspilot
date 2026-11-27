@@ -2,11 +2,126 @@
 
 ## Current module
 
-**Module 09: AI question understanding and business intent extraction.** Implemented and verified on 2026-11-26.
-Awaiting the project owner's review. Module 10 has not been started.
+**Module 10: natural language to SQL generation engine.** Implemented and verified on 2026-11-27.
+Awaiting the project owner's review. Module 11 (SQL security and execution guard) has not been started.
 
-Built on the Module 08 branch (PR #8, not yet merged when this was written), with Modules 01 to 07 merged to `main`.
-Modules 01 to 08 keep their behaviour. Earlier records are kept below.
+Built on `main` with Modules 01 to 09 merged (Module 09 via PR #10). Modules 01 to 09 keep their behaviour; the
+only Module 09 changes are additive (validated intents are now stored, and the reference-authorization helper moved
+into `permission_view.py`). Earlier records are kept below.
+
+## Module 10: what was implemented
+
+References: [docs/SQL_GENERATION.md](docs/SQL_GENERATION.md), ARCHITECTURE.md section 11, README "SQL generation".
+
+**Generated SQL is untrusted and cannot be executed directly.** Nothing in this module executes SQL, calls the
+company GET API or approves a query. Every result is `awaiting_security_validation`.
+
+- **SQL generation module** (`backend/app/ai/sql_generation/`): `schemas/`, `services/`, `prompts/`, `dialects/`,
+  `context/`, `normalizers/`, `validators/`; tests in `backend/tests/sql_generation/`. It reuses Module 08's
+  `LLMService`, Module 09's `BusinessIntent`, schema context, permission view, terminology service, strict JSON
+  extraction and executable-content checks, Module 06's registry and Module 04's permission engine.
+- **Intents are loaded, not trusted.** Module 09 now stores each validated intent in `business_intents` (owned by
+  the asking user). `POST /ai/sql/generate` takes only `intent_id` and `schema_source_id`; the intent must be
+  understood, recent (`AI_SQL_INTENT_MAX_AGE_MINUTES`), for the same schema and schema version.
+- **Dialects.** PostgreSQL, MySQL/MariaDB and SQL Server through SQLGlot, each with its quoting, literal,
+  pagination and date conventions. Other database types are refused (`SQL_DIALECT_UNSUPPORTED`) before any model
+  call. Mixed-dialect syntax (`LIMIT` in T-SQL, `TOP` elsewhere, wrong quoting) is rejected, not rewritten.
+- **Context builder.** Intent tables plus registered join paths through permitted tables (bounded), visible columns
+  only with types, keys and descriptions, relationships, relevant business terms with calculation rules, and the
+  user's permission context (allowed columns, operations, row restrictions, data scope) as guidance. No
+  credentials, connector details or inaccessible metadata.
+- **Versioned prompt** `sql-generation-v1` with the 16 required rules; structured JSON output only.
+- **`SQLGenerationResult`** (strict): id, status (`generated`, `clarification_required`, `generation_failed`), SQL
+  (only when generated and the user may view SQL), dialect, parsed referenced tables/columns, joins with
+  registered-relationship flags, assumptions, explanation, clarification, permission notes, model, provider,
+  schema version, validation status and issues, failure category, attempts, prompt version, SHA-256 fingerprint,
+  `security_status`, `trust_level: untrusted`, `is_executable: false`.
+- **Preliminary SQLGlot validation:** parses in the dialect, exactly one SELECT statement, rejects INSERT, UPDATE,
+  DELETE, DROP, ALTER, CREATE, TRUNCATE, GRANT, REVOKE, MERGE, EXEC/CALL, dynamic SQL and dangerous functions, SELECT
+  INTO, locking, transactions, system catalogs and comments; tables must be supplied `schema.table`; columns resolved
+  by SQLGlot's qualifier against visible columns (unknown, hidden or ambiguous fail); no `SELECT *`; joins must follow
+  registered relationships; aggregation and grouping checks; bounded row limits; the intent's filters, time range,
+  metrics and dimensions must appear. The model's own reference lists are checked but never trusted.
+- **Bounded regeneration:** up to `AI_SQL_MAX_REGENERATIONS` with backend-written feedback; same intent, same
+  context, never for unsafe SQL; then a controlled `generation_failed`. Manual regeneration is limited per intent.
+- **Permission-aware:** the engine re-authorizes the intent before the model call and the parsed SQL after it;
+  revoked access ends with `permission_denied` and no model call. SQL text is shown only with `allow_sql_view`.
+- **Persistence and audit:** `sql_generations` (untrusted artifact, constraints pin untrusted status) and
+  `sql_generation_events` (ids, provider, model, latency, retries, validation outcome, failure category; no SQL,
+  question or prompt). Log event `ai.sql_generation.completed`; Module 08 usage under `sql_generation`.
+- **Frontend.** **Administration → SQL generation** (`/admin/sql-generation`): question summary, status
+  "Generated — Awaiting Security Validation", highlighted SQL with Copy (only with SQL view permission), dialect,
+  tables, columns, joins, assumptions, permission notes, validation issues, Regenerate SQL, View generation details.
+  No Execute button.
+
+### Tables
+
+`business_intents`, `sql_generations`, `sql_generation_events`.
+
+### Migrations
+
+`0008_create_sql_generation_tables` (`2026_11_27_0008_create_sql_generation_tables.py`): creates the three tables with
+their checks, foreign keys and indexes; inserts `ai.sql.generate`, grants it to Administrator and bumps the
+authorization revision. `downgrade()` removes all of this.
+
+### API endpoints (under `/api/v1`, permission `ai.sql.generate`)
+
+`POST /ai/sql/generate`; `GET /ai/sql/generations/{generation_id}`; `POST /ai/sql/generations/{generation_id}/regenerate`.
+No execution endpoint.
+
+### New configuration and dependencies
+
+New settings, in `.env.example` and `docker-compose.yml`: `AI_SQL_RATE_LIMIT_PER_USER` (10/min),
+`AI_SQL_MAX_REGENERATIONS` (2), `AI_SQL_MAX_MANUAL_REGENERATIONS` (3), `AI_SQL_MAX_OUTPUT_TOKENS` (1500),
+`AI_SQL_MAX_SCHEMA_TABLES` (8), `AI_SQL_MAX_ROW_LIMIT` (1000), `AI_SQL_INTENT_MAX_AGE_MINUTES` (60). New runtime
+dependency: `sqlglot==30.35.0` (pure Python, installed by the backend image's `pip install -r requirements.txt`).
+
+### Commands executed and results (Module 10)
+
+| Command | Result |
+| --- | --- |
+| `pytest -q` with `TEST_DATABASE_URL` (PostgreSQL 16) | **884 passed, 1 skipped** (791 before; 93 added, migration/convention tests updated for the new tables, permission and head; the skip is the opt-in live test) |
+| `pytest -q tests/sql_generation` | **93 passed** (67 pure unit tests, 26 API tests) |
+| `pytest -q` without a test database | 495 passed, 390 skipped |
+| `alembic upgrade head`, `alembic check`, `alembic downgrade -1`, `alembic upgrade head` | OK (`0007 → 0008`, no drift, back to `0007`, up again; also covered by `tests/database/test_migrations.py`) |
+| `npx vitest run` | **233 passed** in 34 files (224 before; 9 added) |
+| `npx tsc -b` | OK, no errors |
+| `npm run lint` | OK, 0 errors, 0 warnings |
+| `npm run build` | OK, `SqlGenerationPage` lazy-loaded (14.6 kB) |
+
+**Backend tests added:** metric aggregation, filtering, grouping, sorting, ranking, time ranges and trend
+truncation, CTEs, registered joins, PostgreSQL, MySQL and SQL Server generation (and API runs for each), mixed
+dialect syntax, unknown and restricted tables (same generic feedback), unknown, hidden and ambiguous columns,
+invalid syntax, multiple statements, every rejected statement type, procedures and dynamic SQL, `SELECT *`, joins,
+aggregation and grouping, row limits, intent coverage, unsupported dialects, context contents (no restricted
+fields or secrets, join paths, row restrictions), strict output contract and malformed JSON, SQL in prose,
+declared unauthorized columns, permission revocation before the model call, clarification, regeneration with
+feedback and its limits, manual regeneration limits, schema version preservation, mismatched, expired and changed
+intents, client-supplied intents refused, persistence, audit rows without SQL, SQL visibility, ownership, rate
+limits, provider timeout and failure, authentication and permission, and no execution endpoint. All model replies
+are mocked; no NVIDIA key is needed.
+
+**Frontend tests added:** generation request by intent id, result rendering, SQL syntax display, assumptions, joins,
+tables and columns, clarification response, no generation when the question needs clarification, failures with
+validation issues, regeneration and its limit, generation details, copy only with SQL view permission, loading and
+error states, input validation, route guard, and the "Generated — Awaiting Security Validation" status with no
+Execute action.
+
+### Known limitations (Module 10)
+
+- Preliminary validation is not the security guard: it does not enforce row-level restrictions (they are given to
+  the model and reported), has no function allowlist (only a denylist of dangerous functions), no cost or complexity
+  limits and no literal-type checks. Module 11 must re-parse and enforce all of these and approve the exact SQL
+  (`sql_sha256`).
+- Join checks cover equality conditions between registered tables; joins through CTEs or subqueries are checked only
+  within their own scope. Coverage checks confirm the intent's columns appear, not that the computation is right.
+- `business_intents` stores the user's own question text (needed for the question summary). It is readable only by
+  that user through the API; there is no retention job yet.
+- The SQL text is hidden unless a data permission sets `allow_sql_view`; administrators must enable it per policy to
+  see SQL in the preview.
+- No live NVIDIA call was made here (no key). Real models may need prompt tuning; the SQL generation page is the way
+  to check with a real key.
+- Rate limits are per backend process, like the other limits.
 
 ## Module 09: what was implemented
 

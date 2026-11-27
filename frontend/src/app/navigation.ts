@@ -1,4 +1,16 @@
-import { BookOpenText, BrainCircuit, Cable, Database, Home, KeyRound, MessageSquareText, ShieldCheck, Users, type LucideIcon } from "lucide-react";
+import {
+  BookOpenText,
+  BrainCircuit,
+  Cable,
+  Database,
+  FileCode2,
+  Home,
+  KeyRound,
+  MessageSquareText,
+  ShieldCheck,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 
 /**
  * The application's navigation registry. The sidebar, the mobile drawer and the
@@ -58,6 +70,7 @@ export const navigation: NavSection[] = [
         icon: MessageSquareText,
         permission: "ai.question.preview",
       },
+      { id: "sql-generation", label: "SQL generation", to: "/admin/sql-generation", icon: FileCode2, permission: "ai.sql.generate" },
     ],
   },
 ];

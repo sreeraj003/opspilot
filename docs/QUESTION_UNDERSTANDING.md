@@ -6,6 +6,10 @@ does not call the company connector and is not a chatbot: one question in, one s
 
 Design notes live in ARCHITECTURE.md section 10. This guide covers the contract, the rules and how to configure them.
 
+Since Module 10, every validated intent (status `understood` or `needs_clarification`) is also stored in
+`business_intents`, owned by the asking user, so that SQL generation loads the real intent by `intent_id` instead of
+trusting a client copy. See [SQL_GENERATION.md](SQL_GENERATION.md).
+
 ## 1. How a question is processed
 
 ```

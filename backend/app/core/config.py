@@ -199,6 +199,22 @@ class Settings(BaseSettings):
     # Output token ceiling for one interpretation (still capped by AI_MAX_OUTPUT_TOKENS).
     ai_understand_max_output_tokens: int = Field(default=1500, ge=256, le=32768)
 
+    # --- SQL generation (Module 10). See ARCHITECTURE.md section 11. --------------------------
+    # SQL generation requests (generate + regenerate) each user may make per minute.
+    ai_sql_rate_limit_per_user: int = Field(default=10, ge=1, le=1000)
+    # Extra model requests allowed when generated SQL fails preliminary validation (0 to 3).
+    ai_sql_max_regenerations: int = Field(default=2, ge=0, le=3)
+    # Manual regenerations allowed for one intent (each one is a new generation record).
+    ai_sql_max_manual_regenerations: int = Field(default=3, ge=0, le=10)
+    # Output token ceiling for one SQL generation request (still capped by AI_MAX_OUTPUT_TOKENS).
+    ai_sql_max_output_tokens: int = Field(default=1500, ge=256, le=32768)
+    # Most tables sent to the model as SQL context (intent tables plus join paths).
+    ai_sql_max_schema_tables: int = Field(default=8, ge=1, le=50)
+    # Largest row limit a generated query may request; detail queries must always be limited.
+    ai_sql_max_row_limit: int = Field(default=1000, ge=1, le=100000)
+    # How long a stored business intent may be used for SQL generation (relative dates age).
+    ai_sql_intent_max_age_minutes: int = Field(default=60, ge=1, le=10080)
+
     @field_validator(
         "database_url",
         "secret_key",
