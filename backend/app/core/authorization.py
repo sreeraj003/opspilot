@@ -64,6 +64,11 @@ class Permission(StrEnum):
     AI_PROVIDER_READ = "ai.provider.read"
     AI_PROVIDER_TEST = "ai.provider.test"
     AI_USAGE_READ = "ai.usage.read"
+    # Module 09: question understanding and business terminology.
+    AI_QUESTION_UNDERSTAND = "ai.question.understand"
+    AI_QUESTION_PREVIEW = "ai.question.preview"
+    BUSINESS_TERM_READ = "business_term.read"
+    BUSINESS_TERM_MANAGE = "business_term.manage"
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +181,29 @@ SYSTEM_PERMISSIONS: tuple[SystemPermissionDefinition, ...] = (
         Permission.AI_USAGE_READ,
         "View AI usage",
         "View AI request usage records: provider, model, status, latency and reported token counts.",
+        True,
+    ),
+    # Question understanding is delegable. Interpreting a question never grants data access:
+    # what a user may ask about still comes from their database_data permissions.
+    SystemPermissionDefinition(
+        Permission.AI_QUESTION_UNDERSTAND,
+        "Ask business questions",
+        "Submit business questions for AI interpretation (uses provider tokens; data access still follows data permissions).",
+        True,
+    ),
+    SystemPermissionDefinition(
+        Permission.AI_QUESTION_PREVIEW,
+        "Preview question interpretation",
+        "Use the interpretation preview to test how questions are understood, with diagnostics (own data permissions apply).",
+        True,
+    ),
+    SystemPermissionDefinition(
+        Permission.BUSINESS_TERM_READ, "View business terms", "View business terminology definitions.", True
+    ),
+    SystemPermissionDefinition(
+        Permission.BUSINESS_TERM_MANAGE,
+        "Manage business terms",
+        "Create, edit, activate, deactivate and delete business terminology definitions.",
         True,
     ),
 )

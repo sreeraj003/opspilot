@@ -32,8 +32,13 @@ class LLMProvider(ABC):
         temperature: float,
         max_tokens: int,
         request_id: str,
+        json_output: bool = False,
     ) -> ProviderCompletion:
-        """Run one chat completion and return it normalised. Raise ``ProviderError`` on failure."""
+        """Run one chat completion and return it normalised. Raise ``ProviderError`` on failure.
+
+        ``json_output`` asks for a JSON object where the provider supports it; the
+        caller validates the content either way.
+        """
 
     @abstractmethod
     async def health_check(self) -> ProviderHealth:

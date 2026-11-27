@@ -9,6 +9,7 @@ import logging
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezones import BUSINESS_TIMEZONE_SETTING_KEY, timezone_problem
 from app.core.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.database.transaction import transaction
 from app.models.application_setting import ApplicationSetting
@@ -43,6 +44,10 @@ class ApplicationSettingsService:
     async def put_setting(self, key: str, data: ApplicationSettingWrite) -> tuple[ApplicationSetting, bool]:
         """Create or replace a setting. Returns the setting and whether it was created."""
         _ensure_valid_key(key)
+        if key == BUSINESS_TIMEZONE_SETTING_KEY:
+            problem = timezone_problem(data.value)
+            if problem is not None:
+                raise InvalidInputError(problem)
         try:
             async with transaction(self._session):
                 setting = await self._repository.get_by_key(key)

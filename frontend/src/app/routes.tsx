@@ -2,10 +2,12 @@ import type { RouteObject } from "react-router";
 
 import {
   AIProviderPage,
+  BusinessTermsPage,
   ConnectorDetailPage,
   ConnectorsPage,
   PermissionEditorPage,
   PermissionsPage,
+  QuestionPreviewPage,
   RoleDetailPage,
   RolesPage,
   SchemaDetailPage,
@@ -128,6 +130,18 @@ export const routes: RouteObject[] = [
                     element: <RequireAnyPermission permissions={["ai.provider.read", "ai.provider.test", "ai.usage.read"]} />,
                     handle: crumb("AI provider"),
                     children: [{ index: true, element: <AIProviderPage /> }],
+                  },
+                  {
+                    path: "business-terms",
+                    element: <RequirePermission permission="business_term.read" />,
+                    handle: crumb("Business terms"),
+                    children: [{ index: true, element: <BusinessTermsPage /> }],
+                  },
+                  {
+                    path: "question-preview",
+                    element: <RequirePermission permission="ai.question.preview" />,
+                    handle: crumb("Question preview"),
+                    children: [{ index: true, element: <QuestionPreviewPage /> }],
                   },
                 ],
               },

@@ -1,4 +1,4 @@
-import { BrainCircuit, Cable, Database, Home, KeyRound, ShieldCheck, Users, type LucideIcon } from "lucide-react";
+import { BookOpenText, BrainCircuit, Cable, Database, Home, KeyRound, MessageSquareText, ShieldCheck, Users, type LucideIcon } from "lucide-react";
 
 /**
  * The application's navigation registry. The sidebar, the mobile drawer and the
@@ -49,6 +49,14 @@ export const navigation: NavSection[] = [
         to: "/admin/ai",
         icon: BrainCircuit,
         anyPermission: ["ai.provider.read", "ai.provider.test", "ai.usage.read"],
+      },
+      { id: "business-terms", label: "Business terms", to: "/admin/business-terms", icon: BookOpenText, permission: "business_term.read" },
+      {
+        id: "question-preview",
+        label: "Question preview",
+        to: "/admin/question-preview",
+        icon: MessageSquareText,
+        permission: "ai.question.preview",
       },
     ],
   },

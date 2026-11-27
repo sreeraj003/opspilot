@@ -42,7 +42,11 @@ export type SystemPermission =
   | "connector.activate"
   | "ai.provider.read"
   | "ai.provider.test"
-  | "ai.usage.read";
+  | "ai.usage.read"
+  | "ai.question.understand"
+  | "ai.question.preview"
+  | "business_term.read"
+  | "business_term.manage";
 
 export type Permission = SystemPermission | (string & {});
 
